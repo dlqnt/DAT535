@@ -1,0 +1,2007 @@
+# DAT535 - Final Project: Main Pipeline
+## Notebook 3: Part 3 - Gold Layer Analysis
+
+**Purpose:** To take the clean, conformed data from the Silver Layer and create aggregated, business-level insights for our use case.
+
+**Use Case:** "Analyze 4 years (2020-2024) of NYC Taxi data to identify key operational trends and passenger behaviors for a business intelligence dashboard."
+
+Each analysis below represents a pre-computed table ready for visualization (a "Gold" table).
+
+## 1. Setup: Imports and Spark Session
+
+
+```python
+import findspark
+findspark.init()
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, hour, avg, count, sum, when, desc
+
+
+spark = SparkSession.builder \
+    .appName("TLC Gold Layer Analysis") \
+    .config("spark.driver.memory", "10g") \
+    .getOrCreate()
+
+spark.sparkContext.setLogLevel("WARN")
+print("Spark Session initialized for Gold Layer Analysis.")
+```
+
+    Setting default log level to "WARN".
+    To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+
+
+    25/11/17 19:59:55 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+
+
+    Spark Session initialized for Gold Layer Analysis.
+
+
+## 2. Load the Silver Layer Data
+
+We begin by loading the clean, partitioned Parquet data that was the output of our Part 2 pipeline.
+
+
+```python
+SILVER_PATH = "/home/ubuntu/project/silver_layer_data_v2"
+GOLD_BASE_PATH = "/home/ubuntu/project/gold_layer_data"
+
+print(f"Loading Silver Layer data from: {SILVER_PATH}")
+
+# Spark will automatically discover the partitions (e.g., pickup_year=2020, taxi_type=yellow)
+silver_df = spark.read.parquet(SILVER_PATH)
+
+# Filter out records with parse errors for clean Gold layer analytics
+# Keep only high-quality records without missing values
+silver_df_clean = silver_df.filter(
+    (col("has_parse_errors") == False) & 
+    (col("has_missing_values") == False)
+)
+
+# Cache the DataFrame for faster iterative queries
+silver_df_clean.cache()
+
+# Perform a quick verification to ensure the data is loaded correctly.
+print("\nSilver Layer data loaded successfully.")
+print(f"Total records in Silver Layer: {silver_df.count():,}")
+print(f"Clean records (no parse/missing errors): {silver_df_clean.count():,}")
+print("\nSchema of the Silver DataFrame:")
+silver_df_clean.printSchema()
+print("\nBreakdown by taxi_type:")
+silver_df_clean.groupBy("taxi_type").count().show()
+print("\nBreakdown by year:")
+silver_df_clean.groupBy("pickup_year").count().orderBy("pickup_year").show()
+```
+
+    Loading Silver Layer data from: /home/ubuntu/project/silver_layer_data_v2
+
+
+    [Stage 0:>                                                          (0 + 1) / 1]
+
+                                                                                    
+
+    
+    Silver Layer data loaded successfully.
+
+
+    [Stage 1:====>                                                    (8 + 8) / 109][Stage 1:===================>                                    (38 + 9) / 109]
+
+    [Stage 1:==================================================>     (99 + 8) / 109]
+
+                                                                                    
+
+    Total records in Silver Layer: 179,779,179
+
+
+    [Stage 4:>                                                        (0 + 8) / 109]
+
+    [Stage 4:>                                                        (1 + 8) / 109]
+
+    [Stage 4:=>                                                       (3 + 8) / 109]
+
+    [Stage 4:==>                                                      (5 + 8) / 109]
+
+    [Stage 4:====>                                                    (8 + 8) / 109]
+
+    [Stage 4:====>                                                    (9 + 8) / 109]
+
+    [Stage 4:=====>                                                  (10 + 8) / 109][Stage 4:======>                                                 (12 + 8) / 109]
+
+    [Stage 4:=======>                                                (15 + 8) / 109]
+
+    [Stage 4:========>                                               (16 + 8) / 109]
+
+    [Stage 4:========>                                               (17 + 8) / 109][Stage 4:=========>                                              (18 + 8) / 109]
+
+    [Stage 4:=========>                                              (19 + 8) / 109]
+
+    [Stage 4:==========>                                             (20 + 8) / 109][Stage 4:============>                                           (24 + 8) / 109]
+
+    25/11/17 20:00:26 WARN MemoryStore: Not enough space to cache rdd_13_31 in memory! (computed 71.5 MiB so far)
+    25/11/17 20:00:27 WARN BlockManager: Persisting block rdd_13_31 to disk instead.
+
+
+    25/11/17 20:00:27 WARN MemoryStore: Not enough space to cache rdd_13_25 in memory! (computed 122.7 MiB so far)
+    25/11/17 20:00:27 WARN BlockManager: Persisting block rdd_13_25 to disk instead.
+
+
+    [Stage 4:============>                                           (25 + 8) / 109]25/11/17 20:00:28 WARN MemoryStore: Not enough space to cache rdd_13_28 in memory! (computed 120.0 MiB so far)
+    25/11/17 20:00:28 WARN BlockManager: Persisting block rdd_13_28 to disk instead.
+    25/11/17 20:00:28 WARN MemoryStore: Not enough space to cache rdd_13_27 in memory! (computed 121.0 MiB so far)
+    25/11/17 20:00:28 WARN BlockManager: Persisting block rdd_13_27 to disk instead.
+
+
+    [Stage 4:=============>                                          (26 + 8) / 109]
+
+    [Stage 4:=============>                                          (27 + 8) / 109]
+
+    25/11/17 20:00:30 WARN MemoryStore: Not enough space to cache rdd_13_32 in memory! (computed 71.5 MiB so far)
+    25/11/17 20:00:30 WARN BlockManager: Persisting block rdd_13_32 to disk instead.
+    25/11/17 20:00:30 WARN MemoryStore: Failed to reserve initial memory threshold of 1024.0 KiB for computing block rdd_13_27 in memory.
+    25/11/17 20:00:30 WARN MemoryStore: Not enough space to cache rdd_13_33 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:00:30 WARN BlockManager: Persisting block rdd_13_33 to disk instead.
+    25/11/17 20:00:30 WARN MemoryStore: Not enough space to cache rdd_13_34 in memory! (computed 1097.3 KiB so far)
+    25/11/17 20:00:30 WARN BlockManager: Persisting block rdd_13_34 to disk instead.
+    25/11/17 20:00:30 WARN MemoryStore: Not enough space to cache rdd_13_27 in memory! (computed 384.0 B so far)
+    25/11/17 20:00:30 WARN MemoryStore: Not enough space to cache rdd_13_25 in memory! (computed 122.7 MiB so far)
+
+
+    [Stage 4:===============>                                        (30 + 8) / 109]25/11/17 20:00:30 WARN MemoryStore: Not enough space to cache rdd_13_28 in memory! (computed 120.0 MiB so far)
+
+
+    [Stage 4:===============>                                        (31 + 8) / 109]25/11/17 20:00:30 WARN MemoryStore: Not enough space to cache rdd_13_31 in memory! (computed 122.0 MiB so far)
+    [Stage 4:================>                                       (32 + 8) / 109]
+
+    25/11/17 20:00:32 WARN MemoryStore: Not enough space to cache rdd_13_36 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:00:32 WARN BlockManager: Persisting block rdd_13_36 to disk instead.
+    25/11/17 20:00:32 WARN MemoryStore: Not enough space to cache rdd_13_37 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:00:32 WARN BlockManager: Persisting block rdd_13_37 to disk instead.
+    25/11/17 20:00:32 WARN MemoryStore: Not enough space to cache rdd_13_38 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:00:32 WARN BlockManager: Persisting block rdd_13_38 to disk instead.
+
+
+    25/11/17 20:00:33 WARN MemoryStore: Not enough space to cache rdd_13_39 in memory! (computed 69.5 MiB so far)
+    25/11/17 20:00:33 WARN BlockManager: Persisting block rdd_13_39 to disk instead.
+
+
+    25/11/17 20:00:34 WARN MemoryStore: Not enough space to cache rdd_13_32 in memory! (computed 71.5 MiB so far)
+    [Stage 4:================>                                       (33 + 8) / 109]
+
+    25/11/17 20:00:34 WARN MemoryStore: Not enough space to cache rdd_13_35 in memory! (computed 120.9 MiB so far)
+    25/11/17 20:00:34 WARN BlockManager: Persisting block rdd_13_35 to disk instead.
+
+
+    25/11/17 20:00:35 WARN MemoryStore: Not enough space to cache rdd_13_33 in memory! (computed 121.0 MiB so far)
+    [Stage 4:=================>                                      (34 + 8) / 109]
+
+    25/11/17 20:00:35 WARN MemoryStore: Not enough space to cache rdd_13_34 in memory! (computed 119.7 MiB so far)
+    [Stage 4:=================>                                      (35 + 8) / 109]
+
+    25/11/17 20:00:36 WARN MemoryStore: Not enough space to cache rdd_13_41 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:00:36 WARN BlockManager: Persisting block rdd_13_41 to disk instead.
+    25/11/17 20:00:36 WARN MemoryStore: Not enough space to cache rdd_13_40 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:00:36 WARN BlockManager: Persisting block rdd_13_40 to disk instead.
+    25/11/17 20:00:36 WARN MemoryStore: Not enough space to cache rdd_13_37 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:00:36 WARN MemoryStore: Not enough space to cache rdd_13_36 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:00:36 WARN MemoryStore: Not enough space to cache rdd_13_38 in memory! (computed 122.3 MiB so far)
+    25/11/17 20:00:37 WARN MemoryStore: Not enough space to cache rdd_13_39 in memory! (computed 69.5 MiB so far)
+    [Stage 4:====================>                                   (39 + 8) / 109]
+
+    25/11/17 20:00:37 WARN MemoryStore: Not enough space to cache rdd_13_42 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:00:37 WARN BlockManager: Persisting block rdd_13_42 to disk instead.
+    25/11/17 20:00:37 WARN MemoryStore: Not enough space to cache rdd_13_35 in memory! (computed 120.9 MiB so far)
+    [Stage 4:====================>                                   (40 + 8) / 109]
+
+    25/11/17 20:00:38 WARN MemoryStore: Not enough space to cache rdd_13_45 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:00:38 WARN BlockManager: Persisting block rdd_13_45 to disk instead.
+    25/11/17 20:00:38 WARN MemoryStore: Not enough space to cache rdd_13_43 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:00:38 WARN BlockManager: Persisting block rdd_13_43 to disk instead.
+    25/11/17 20:00:38 WARN MemoryStore: Not enough space to cache rdd_13_46 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:00:38 WARN BlockManager: Persisting block rdd_13_46 to disk instead.
+
+
+    25/11/17 20:00:39 WARN MemoryStore: Not enough space to cache rdd_13_40 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:00:39 WARN MemoryStore: Not enough space to cache rdd_13_47 in memory! (computed 69.2 MiB so far)
+    25/11/17 20:00:39 WARN BlockManager: Persisting block rdd_13_47 to disk instead.
+    [Stage 4:=====================>                                  (41 + 8) / 109]
+
+    25/11/17 20:00:41 WARN MemoryStore: Not enough space to cache rdd_13_44 in memory! (computed 120.8 MiB so far)
+    25/11/17 20:00:41 WARN BlockManager: Persisting block rdd_13_44 to disk instead.
+
+
+    25/11/17 20:00:41 WARN MemoryStore: Not enough space to cache rdd_13_42 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:00:41 WARN MemoryStore: Not enough space to cache rdd_13_41 in memory! (computed 123.7 MiB so far)
+    [Stage 4:======================>                                 (43 + 8) / 109]
+
+    25/11/17 20:00:42 WARN MemoryStore: Not enough space to cache rdd_13_47 in memory! (computed 69.2 MiB so far)
+    [Stage 4:======================>                                 (44 + 8) / 109]
+
+    25/11/17 20:00:42 WARN MemoryStore: Not enough space to cache rdd_13_43 in memory! (computed 18.7 MiB so far)
+    [Stage 4:=======================>                                (45 + 8) / 109]25/11/17 20:00:43 WARN MemoryStore: Not enough space to cache rdd_13_45 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:00:43 WARN MemoryStore: Not enough space to cache rdd_13_44 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:00:43 WARN MemoryStore: Not enough space to cache rdd_13_46 in memory! (computed 18.2 MiB so far)
+
+
+    [Stage 4:========================>                               (48 + 8) / 109]25/11/17 20:00:43 WARN MemoryStore: Not enough space to cache rdd_13_49 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:00:43 WARN BlockManager: Persisting block rdd_13_49 to disk instead.
+    25/11/17 20:00:43 WARN MemoryStore: Not enough space to cache rdd_13_50 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:00:43 WARN BlockManager: Persisting block rdd_13_50 to disk instead.
+
+
+    25/11/17 20:00:43 WARN MemoryStore: Not enough space to cache rdd_13_48 in memory! (computed 120.7 MiB so far)
+    25/11/17 20:00:43 WARN BlockManager: Persisting block rdd_13_48 to disk instead.
+
+
+    25/11/17 20:00:44 WARN MemoryStore: Not enough space to cache rdd_13_53 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:00:44 WARN BlockManager: Persisting block rdd_13_53 to disk instead.
+    25/11/17 20:00:44 WARN MemoryStore: Not enough space to cache rdd_13_52 in memory! (computed 36.2 MiB so far)
+    25/11/17 20:00:44 WARN BlockManager: Persisting block rdd_13_52 to disk instead.
+    25/11/17 20:00:44 WARN MemoryStore: Not enough space to cache rdd_13_54 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:00:44 WARN BlockManager: Persisting block rdd_13_54 to disk instead.
+
+
+    25/11/17 20:00:45 WARN MemoryStore: Not enough space to cache rdd_13_48 in memory! (computed 70.5 MiB so far)
+    [Stage 4:=========================>                              (49 + 8) / 109]
+
+    25/11/17 20:00:45 WARN MemoryStore: Not enough space to cache rdd_13_55 in memory! (computed 69.2 MiB so far)
+    25/11/17 20:00:45 WARN BlockManager: Persisting block rdd_13_55 to disk instead.
+
+
+    25/11/17 20:00:46 WARN MemoryStore: Not enough space to cache rdd_13_51 in memory! (computed 122.3 MiB so far)
+    25/11/17 20:00:46 WARN BlockManager: Persisting block rdd_13_51 to disk instead.
+
+
+    25/11/17 20:00:47 WARN MemoryStore: Not enough space to cache rdd_13_49 in memory! (computed 18.7 MiB so far)
+    [Stage 4:=========================>                              (50 + 8) / 109]25/11/17 20:00:47 WARN MemoryStore: Not enough space to cache rdd_13_56 in memory! (computed 70.7 MiB so far)
+    25/11/17 20:00:47 WARN BlockManager: Persisting block rdd_13_56 to disk instead.
+    25/11/17 20:00:47 WARN MemoryStore: Not enough space to cache rdd_13_50 in memory! (computed 120.0 MiB so far)
+
+
+    [Stage 4:==========================>                             (51 + 8) / 109]
+
+    25/11/17 20:00:49 WARN MemoryStore: Not enough space to cache rdd_13_51 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:00:49 WARN MemoryStore: Not enough space to cache rdd_13_52 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:00:49 WARN MemoryStore: Not enough space to cache rdd_13_53 in memory! (computed 119.2 MiB so far)
+    [Stage 4:===========================>                            (54 + 8) / 109]
+
+    25/11/17 20:00:49 WARN MemoryStore: Not enough space to cache rdd_13_55 in memory! (computed 69.2 MiB so far)
+    25/11/17 20:00:49 WARN MemoryStore: Not enough space to cache rdd_13_58 in memory! (computed 36.0 MiB so far)
+    25/11/17 20:00:49 WARN BlockManager: Persisting block rdd_13_58 to disk instead.
+    [Stage 4:============================>                           (55 + 8) / 109]25/11/17 20:00:49 WARN MemoryStore: Not enough space to cache rdd_13_54 in memory! (computed 119.5 MiB so far)
+
+
+    [Stage 4:============================>                           (56 + 8) / 109]
+
+    25/11/17 20:00:50 WARN MemoryStore: Not enough space to cache rdd_13_57 in memory! (computed 69.1 MiB so far)
+    25/11/17 20:00:50 WARN BlockManager: Persisting block rdd_13_57 to disk instead.
+    25/11/17 20:00:50 WARN MemoryStore: Not enough space to cache rdd_13_56 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:00:50 WARN MemoryStore: Not enough space to cache rdd_13_60 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:00:50 WARN BlockManager: Persisting block rdd_13_60 to disk instead.
+    25/11/17 20:00:50 WARN MemoryStore: Not enough space to cache rdd_13_63 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:00:50 WARN BlockManager: Persisting block rdd_13_63 to disk instead.
+    25/11/17 20:00:50 WARN MemoryStore: Not enough space to cache rdd_13_61 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:00:50 WARN BlockManager: Persisting block rdd_13_61 to disk instead.
+    25/11/17 20:00:50 WARN MemoryStore: Not enough space to cache rdd_13_59 in memory! (computed 35.1 MiB so far)
+    25/11/17 20:00:50 WARN BlockManager: Persisting block rdd_13_59 to disk instead.
+    [Stage 4:=============================>                          (57 + 8) / 109]
+
+    25/11/17 20:00:52 WARN MemoryStore: Not enough space to cache rdd_13_62 in memory! (computed 118.9 MiB so far)
+    25/11/17 20:00:52 WARN BlockManager: Persisting block rdd_13_62 to disk instead.
+
+
+    25/11/17 20:00:53 WARN MemoryStore: Not enough space to cache rdd_13_57 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:00:53 WARN MemoryStore: Not enough space to cache rdd_13_59 in memory! (computed 118.0 MiB so far)
+    [Stage 4:==============================>                         (59 + 8) / 109]
+
+    25/11/17 20:00:53 WARN MemoryStore: Not enough space to cache rdd_13_58 in memory! (computed 120.5 MiB so far)
+    [Stage 4:==============================>                         (60 + 8) / 109]
+
+    25/11/17 20:00:53 WARN MemoryStore: Not enough space to cache rdd_13_60 in memory! (computed 69.0 MiB so far)
+    [Stage 4:===============================>                        (61 + 8) / 109]
+
+    25/11/17 20:00:54 WARN MemoryStore: Not enough space to cache rdd_13_65 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:00:54 WARN BlockManager: Persisting block rdd_13_65 to disk instead.
+    25/11/17 20:00:54 WARN MemoryStore: Not enough space to cache rdd_13_66 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:00:54 WARN BlockManager: Persisting block rdd_13_66 to disk instead.
+
+
+    25/11/17 20:00:54 WARN MemoryStore: Not enough space to cache rdd_13_61 in memory! (computed 69.9 MiB so far)
+    25/11/17 20:00:54 WARN MemoryStore: Not enough space to cache rdd_13_62 in memory! (computed 35.3 MiB so far)
+    [Stage 4:================================>                       (63 + 8) / 109]
+
+    25/11/17 20:00:54 WARN MemoryStore: Not enough space to cache rdd_13_63 in memory! (computed 36.0 MiB so far)
+    [Stage 4:================================>                       (64 + 8) / 109]
+
+    25/11/17 20:00:55 WARN MemoryStore: Not enough space to cache rdd_13_64 in memory! (computed 118.6 MiB so far)
+    25/11/17 20:00:55 WARN BlockManager: Persisting block rdd_13_64 to disk instead.
+    25/11/17 20:00:55 WARN MemoryStore: Not enough space to cache rdd_13_68 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:00:55 WARN BlockManager: Persisting block rdd_13_68 to disk instead.
+
+
+    25/11/17 20:00:55 WARN MemoryStore: Not enough space to cache rdd_13_70 in memory! (computed 36.2 MiB so far)
+    25/11/17 20:00:55 WARN BlockManager: Persisting block rdd_13_70 to disk instead.
+    25/11/17 20:00:56 WARN MemoryStore: Not enough space to cache rdd_13_71 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:00:56 WARN BlockManager: Persisting block rdd_13_71 to disk instead.
+
+
+    25/11/17 20:00:56 WARN MemoryStore: Not enough space to cache rdd_13_64 in memory! (computed 18.1 MiB so far)
+    [Stage 4:=================================>                      (65 + 8) / 109]
+
+    25/11/17 20:00:57 WARN MemoryStore: Not enough space to cache rdd_13_69 in memory! (computed 68.8 MiB so far)
+    25/11/17 20:00:57 WARN BlockManager: Persisting block rdd_13_69 to disk instead.
+    25/11/17 20:00:57 WARN MemoryStore: Not enough space to cache rdd_13_67 in memory! (computed 121.6 MiB so far)
+    25/11/17 20:00:57 WARN BlockManager: Persisting block rdd_13_67 to disk instead.
+    25/11/17 20:00:57 WARN MemoryStore: Not enough space to cache rdd_13_72 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:00:57 WARN BlockManager: Persisting block rdd_13_72 to disk instead.
+
+
+    25/11/17 20:00:59 WARN MemoryStore: Not enough space to cache rdd_13_66 in memory! (computed 70.2 MiB so far)
+    25/11/17 20:00:59 WARN MemoryStore: Not enough space to cache rdd_13_67 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:00:59 WARN MemoryStore: Not enough space to cache rdd_13_65 in memory! (computed 121.7 MiB so far)
+    [Stage 4:==================================>                     (68 + 8) / 109]
+
+    25/11/17 20:01:00 WARN MemoryStore: Not enough space to cache rdd_13_68 in memory! (computed 68.7 MiB so far)
+    25/11/17 20:01:00 WARN MemoryStore: Not enough space to cache rdd_13_70 in memory! (computed 120.3 MiB so far)
+    [Stage 4:===================================>                    (70 + 8) / 109]
+
+    25/11/17 20:01:00 WARN MemoryStore: Not enough space to cache rdd_13_71 in memory! (computed 119.5 MiB so far)
+    [Stage 4:====================================>                   (71 + 8) / 109]
+
+    25/11/17 20:01:01 WARN MemoryStore: Not enough space to cache rdd_13_74 in memory! (computed 17.8 MiB so far)
+    25/11/17 20:01:01 WARN BlockManager: Persisting block rdd_13_74 to disk instead.
+    25/11/17 20:01:01 WARN MemoryStore: Not enough space to cache rdd_13_69 in memory! (computed 118.7 MiB so far)
+
+
+    [Stage 4:====================================>                   (72 + 8) / 109]25/11/17 20:01:01 WARN MemoryStore: Not enough space to cache rdd_13_78 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:01 WARN BlockManager: Persisting block rdd_13_78 to disk instead.
+
+
+    25/11/17 20:01:01 WARN MemoryStore: Not enough space to cache rdd_13_76 in memory! (computed 35.9 MiB so far)
+    25/11/17 20:01:01 WARN BlockManager: Persisting block rdd_13_76 to disk instead.
+    25/11/17 20:01:01 WARN MemoryStore: Not enough space to cache rdd_13_77 in memory! (computed 36.1 MiB so far)
+    25/11/17 20:01:01 WARN BlockManager: Persisting block rdd_13_77 to disk instead.
+
+
+    25/11/17 20:01:02 WARN MemoryStore: Not enough space to cache rdd_13_73 in memory! (computed 69.7 MiB so far)
+    25/11/17 20:01:02 WARN BlockManager: Persisting block rdd_13_73 to disk instead.
+    25/11/17 20:01:02 WARN MemoryStore: Not enough space to cache rdd_13_75 in memory! (computed 70.5 MiB so far)
+    25/11/17 20:01:02 WARN BlockManager: Persisting block rdd_13_75 to disk instead.
+
+
+    25/11/17 20:01:02 WARN MemoryStore: Not enough space to cache rdd_13_72 in memory! (computed 121.2 MiB so far)
+    [Stage 4:=====================================>                  (73 + 8) / 109]
+
+    25/11/17 20:01:04 WARN MemoryStore: Not enough space to cache rdd_13_79 in memory! (computed 118.2 MiB so far)
+    25/11/17 20:01:04 WARN BlockManager: Persisting block rdd_13_79 to disk instead.
+    25/11/17 20:01:04 WARN MemoryStore: Not enough space to cache rdd_13_75 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:05 WARN MemoryStore: Not enough space to cache rdd_13_73 in memory! (computed 18.6 MiB so far)
+
+
+    [Stage 4:======================================>                 (75 + 8) / 109]25/11/17 20:01:05 WARN MemoryStore: Not enough space to cache rdd_13_76 in memory! (computed 18.7 MiB so far)
+    [Stage 4:=======================================>                (76 + 8) / 109]
+
+    25/11/17 20:01:05 WARN MemoryStore: Not enough space to cache rdd_13_77 in memory! (computed 18.7 MiB so far)
+    [Stage 4:=======================================>                (77 + 8) / 109]25/11/17 20:01:05 WARN MemoryStore: Not enough space to cache rdd_13_74 in memory! (computed 67.9 MiB so far)
+
+
+    [Stage 4:========================================>               (78 + 8) / 109]
+
+    25/11/17 20:01:05 WARN MemoryStore: Not enough space to cache rdd_13_78 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:01:05 WARN MemoryStore: Not enough space to cache rdd_13_79 in memory! (computed 34.5 MiB so far)
+    25/11/17 20:01:06 WARN MemoryStore: Not enough space to cache rdd_13_83 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:06 WARN BlockManager: Persisting block rdd_13_83 to disk instead.
+    [Stage 4:=========================================>              (80 + 8) / 109]
+
+    25/11/17 20:01:06 WARN MemoryStore: Not enough space to cache rdd_13_84 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:06 WARN BlockManager: Persisting block rdd_13_84 to disk instead.
+    25/11/17 20:01:06 WARN MemoryStore: Not enough space to cache rdd_13_85 in memory! (computed 17.6 MiB so far)
+    25/11/17 20:01:06 WARN BlockManager: Persisting block rdd_13_85 to disk instead.
+    25/11/17 20:01:06 WARN MemoryStore: Not enough space to cache rdd_13_81 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:01:06 WARN BlockManager: Persisting block rdd_13_81 to disk instead.
+    25/11/17 20:01:06 WARN MemoryStore: Not enough space to cache rdd_13_82 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:01:06 WARN BlockManager: Persisting block rdd_13_82 to disk instead.
+    25/11/17 20:01:06 WARN MemoryStore: Not enough space to cache rdd_13_80 in memory! (computed 118.2 MiB so far)
+    25/11/17 20:01:06 WARN BlockManager: Persisting block rdd_13_80 to disk instead.
+
+
+    25/11/17 20:01:08 WARN MemoryStore: Not enough space to cache rdd_13_80 in memory! (computed 68.4 MiB so far)
+    [Stage 4:=========================================>              (81 + 8) / 109]
+
+    25/11/17 20:01:08 WARN MemoryStore: Not enough space to cache rdd_13_86 in memory! (computed 70.4 MiB so far)
+    25/11/17 20:01:08 WARN BlockManager: Persisting block rdd_13_86 to disk instead.
+
+
+    25/11/17 20:01:09 WARN MemoryStore: Not enough space to cache rdd_13_87 in memory! (computed 118.1 MiB so far)
+    25/11/17 20:01:09 WARN BlockManager: Persisting block rdd_13_87 to disk instead.
+
+
+    25/11/17 20:01:10 WARN MemoryStore: Not enough space to cache rdd_13_85 in memory! (computed 17.6 MiB so far)
+    [Stage 4:==========================================>             (82 + 8) / 109]25/11/17 20:01:10 WARN MemoryStore: Not enough space to cache rdd_13_83 in memory! (computed 118.9 MiB so far)
+    25/11/17 20:01:10 WARN MemoryStore: Not enough space to cache rdd_13_82 in memory! (computed 18.2 MiB so far)
+
+
+    25/11/17 20:01:10 WARN MemoryStore: Not enough space to cache rdd_13_81 in memory! (computed 68.4 MiB so far)
+    25/11/17 20:01:10 WARN MemoryStore: Not enough space to cache rdd_13_84 in memory! (computed 18.2 MiB so far)
+    [Stage 4:============================================>           (86 + 8) / 109]
+
+    25/11/17 20:01:11 WARN MemoryStore: Not enough space to cache rdd_13_87 in memory! (computed 68.4 MiB so far)
+    25/11/17 20:01:11 WARN MemoryStore: Not enough space to cache rdd_13_89 in memory! (computed 18.4 MiB so far)
+    25/11/17 20:01:11 WARN BlockManager: Persisting block rdd_13_89 to disk instead.
+    [Stage 4:============================================>           (87 + 8) / 109]
+
+    25/11/17 20:01:11 WARN MemoryStore: Not enough space to cache rdd_13_86 in memory! (computed 70.4 MiB so far)
+    25/11/17 20:01:11 WARN MemoryStore: Not enough space to cache rdd_13_90 in memory! (computed 17.6 MiB so far)
+    25/11/17 20:01:11 WARN BlockManager: Persisting block rdd_13_90 to disk instead.
+    25/11/17 20:01:11 WARN MemoryStore: Not enough space to cache rdd_13_92 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:11 WARN BlockManager: Persisting block rdd_13_92 to disk instead.
+    [Stage 4:=============================================>          (88 + 8) / 109]
+
+    25/11/17 20:01:12 WARN MemoryStore: Not enough space to cache rdd_13_91 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:01:12 WARN BlockManager: Persisting block rdd_13_91 to disk instead.
+    25/11/17 20:01:12 WARN MemoryStore: Not enough space to cache rdd_13_88 in memory! (computed 117.9 MiB so far)
+    25/11/17 20:01:12 WARN BlockManager: Persisting block rdd_13_88 to disk instead.
+    25/11/17 20:01:12 WARN MemoryStore: Not enough space to cache rdd_13_93 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:01:12 WARN BlockManager: Persisting block rdd_13_93 to disk instead.
+
+
+    25/11/17 20:01:13 WARN MemoryStore: Not enough space to cache rdd_13_88 in memory! (computed 68.3 MiB so far)
+    [Stage 4:=============================================>          (89 + 8) / 109]
+
+    25/11/17 20:01:14 WARN MemoryStore: Not enough space to cache rdd_13_95 in memory! (computed 69.7 MiB so far)
+    25/11/17 20:01:14 WARN BlockManager: Persisting block rdd_13_95 to disk instead.
+
+
+    25/11/17 20:01:14 WARN MemoryStore: Not enough space to cache rdd_13_90 in memory! (computed 34.2 MiB so far)
+    [Stage 4:==============================================>         (90 + 8) / 109]
+
+    25/11/17 20:01:15 WARN MemoryStore: Not enough space to cache rdd_13_89 in memory! (computed 36.0 MiB so far)
+    25/11/17 20:01:15 WARN MemoryStore: Not enough space to cache rdd_13_94 in memory! (computed 120.2 MiB so far)
+    25/11/17 20:01:15 WARN BlockManager: Persisting block rdd_13_94 to disk instead.
+    [Stage 4:==============================================>         (91 + 8) / 109]
+
+    25/11/17 20:01:15 WARN MemoryStore: Not enough space to cache rdd_13_97 in memory! (computed 17.8 MiB so far)
+    25/11/17 20:01:15 WARN BlockManager: Persisting block rdd_13_97 to disk instead.
+    25/11/17 20:01:15 WARN MemoryStore: Not enough space to cache rdd_13_91 in memory! (computed 119.6 MiB so far)
+    [Stage 4:===============================================>        (92 + 8) / 109]
+
+    25/11/17 20:01:16 WARN MemoryStore: Not enough space to cache rdd_13_93 in memory! (computed 69.7 MiB so far)
+    25/11/17 20:01:16 WARN MemoryStore: Not enough space to cache rdd_13_96 in memory! (computed 68.5 MiB so far)
+    25/11/17 20:01:16 WARN BlockManager: Persisting block rdd_13_96 to disk instead.
+    25/11/17 20:01:16 WARN MemoryStore: Not enough space to cache rdd_13_94 in memory! (computed 68.8 MiB so far)
+    [Stage 4:================================================>       (94 + 8) / 109]25/11/17 20:01:16 WARN MemoryStore: Not enough space to cache rdd_13_95 in memory! (computed 35.7 MiB so far)
+    25/11/17 20:01:16 WARN MemoryStore: Not enough space to cache rdd_13_92 in memory! (computed 70.3 MiB so far)
+
+
+    [Stage 4:=================================================>      (96 + 8) / 109]
+
+    25/11/17 20:01:17 WARN MemoryStore: Not enough space to cache rdd_13_102 in memory! (computed 18.4 MiB so far)
+    25/11/17 20:01:17 WARN BlockManager: Persisting block rdd_13_102 to disk instead.
+
+
+    25/11/17 20:01:17 WARN MemoryStore: Not enough space to cache rdd_13_98 in memory! (computed 67.4 MiB so far)
+    25/11/17 20:01:17 WARN BlockManager: Persisting block rdd_13_98 to disk instead.
+    25/11/17 20:01:17 WARN MemoryStore: Not enough space to cache rdd_13_100 in memory! (computed 34.8 MiB so far)
+    25/11/17 20:01:17 WARN BlockManager: Persisting block rdd_13_100 to disk instead.
+    25/11/17 20:01:17 WARN MemoryStore: Not enough space to cache rdd_13_99 in memory! (computed 35.8 MiB so far)
+    25/11/17 20:01:17 WARN BlockManager: Persisting block rdd_13_99 to disk instead.
+    25/11/17 20:01:17 WARN MemoryStore: Not enough space to cache rdd_13_101 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:01:17 WARN BlockManager: Persisting block rdd_13_101 to disk instead.
+
+
+    25/11/17 20:01:18 WARN MemoryStore: Not enough space to cache rdd_13_96 in memory! (computed 68.5 MiB so far)
+    [Stage 4:=================================================>      (97 + 8) / 109]25/11/17 20:01:18 WARN MemoryStore: Not enough space to cache rdd_13_98 in memory! (computed 67.4 MiB so far)
+
+
+    [Stage 4:==================================================>     (98 + 8) / 109]
+
+    25/11/17 20:01:19 WARN MemoryStore: Not enough space to cache rdd_13_100 in memory! (computed 34.8 MiB so far)
+    25/11/17 20:01:19 WARN MemoryStore: Not enough space to cache rdd_13_97 in memory! (computed 34.5 MiB so far)
+    [Stage 4:==================================================>    (100 + 8) / 109]25/11/17 20:01:19 WARN MemoryStore: Not enough space to cache rdd_13_103 in memory! (computed 118.0 MiB so far)
+    25/11/17 20:01:19 WARN BlockManager: Persisting block rdd_13_103 to disk instead.
+
+
+    25/11/17 20:01:20 WARN MemoryStore: Not enough space to cache rdd_13_101 in memory! (computed 18.7 MiB so far)
+    [Stage 4:==================================================>    (101 + 8) / 109]25/11/17 20:01:20 WARN MemoryStore: Not enough space to cache rdd_13_99 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:20 WARN MemoryStore: Not enough space to cache rdd_13_106 in memory! (computed 35.6 MiB so far)
+    25/11/17 20:01:20 WARN BlockManager: Persisting block rdd_13_106 to disk instead.
+
+
+    [Stage 4:===================================================>   (102 + 7) / 109]
+
+    25/11/17 20:01:21 WARN MemoryStore: Not enough space to cache rdd_13_108 in memory! (computed 17.9 MiB so far)
+    25/11/17 20:01:21 WARN BlockManager: Persisting block rdd_13_108 to disk instead.
+    25/11/17 20:01:21 WARN MemoryStore: Not enough space to cache rdd_13_104 in memory! (computed 67.5 MiB so far)
+    25/11/17 20:01:21 WARN BlockManager: Persisting block rdd_13_104 to disk instead.
+    25/11/17 20:01:21 WARN MemoryStore: Not enough space to cache rdd_13_105 in memory! (computed 68.2 MiB so far)
+    25/11/17 20:01:21 WARN BlockManager: Persisting block rdd_13_105 to disk instead.
+
+
+    [Stage 4:===================================================>   (103 + 6) / 109]
+
+    [Stage 4:====================================================>  (104 + 5) / 109]
+
+    25/11/17 20:01:23 WARN MemoryStore: Not enough space to cache rdd_13_103 in memory! (computed 18.2 MiB so far)
+    [Stage 4:====================================================>  (105 + 4) / 109]
+
+    25/11/17 20:01:24 WARN MemoryStore: Not enough space to cache rdd_13_105 in memory! (computed 17.8 MiB so far)
+    [Stage 4:=====================================================> (106 + 3) / 109]
+
+    25/11/17 20:01:24 WARN MemoryStore: Not enough space to cache rdd_13_106 in memory! (computed 18.2 MiB so far)
+    [Stage 4:=====================================================> (107 + 2) / 109]
+
+    25/11/17 20:01:25 WARN MemoryStore: Not enough space to cache rdd_13_102 in memory! (computed 18.4 MiB so far)
+    [Stage 4:======================================================>(108 + 1) / 109]25/11/17 20:01:25 WARN MemoryStore: Not enough space to cache rdd_13_104 in memory! (computed 17.7 MiB so far)
+
+
+    25/11/17 20:01:25 WARN MemoryStore: Not enough space to cache rdd_13_25 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:25 WARN MemoryStore: Not enough space to cache rdd_13_31 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:25 WARN MemoryStore: Not enough space to cache rdd_13_27 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:25 WARN MemoryStore: Not enough space to cache rdd_13_28 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:25 WARN MemoryStore: Not enough space to cache rdd_13_35 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:25 WARN MemoryStore: Not enough space to cache rdd_13_32 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:25 WARN MemoryStore: Not enough space to cache rdd_13_33 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:25 WARN MemoryStore: Not enough space to cache rdd_13_34 in memory! (computed 18.2 MiB so far)
+    [Stage 5:==============>                                         (28 + 8) / 109]
+
+    [Stage 5:==============>                                         (29 + 8) / 109]25/11/17 20:01:26 WARN MemoryStore: Not enough space to cache rdd_13_36 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:26 WARN MemoryStore: Not enough space to cache rdd_13_37 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:26 WARN MemoryStore: Not enough space to cache rdd_13_38 in memory! (computed 18.7 MiB so far)
+    [Stage 5:=================>                                      (35 + 8) / 109]
+
+    25/11/17 20:01:26 WARN MemoryStore: Not enough space to cache rdd_13_39 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:26 WARN MemoryStore: Not enough space to cache rdd_13_42 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:26 WARN MemoryStore: Not enough space to cache rdd_13_40 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:26 WARN MemoryStore: Not enough space to cache rdd_13_41 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:01:26 WARN MemoryStore: Not enough space to cache rdd_13_43 in memory! (computed 18.7 MiB so far)
+    [Stage 5:==================>                                     (36 + 8) / 109]
+
+    25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_44 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_47 in memory! (computed 18.1 MiB so far)
+    25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_45 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_48 in memory! (computed 18.7 MiB so far)
+    [Stage 5:======================>                                 (43 + 8) / 109]25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_46 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_49 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_50 in memory! (computed 18.7 MiB so far)
+
+
+    25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_51 in memory! (computed 18.7 MiB so far)
+    [Stage 5:======================>                                 (44 + 8) / 109]
+
+    25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_52 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_53 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_54 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_55 in memory! (computed 18.2 MiB so far)
+    [Stage 5:=========================>                              (49 + 8) / 109]25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_56 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_58 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_57 in memory! (computed 18.2 MiB so far)
+
+
+    [Stage 5:==========================>                             (52 + 8) / 109]25/11/17 20:01:27 WARN MemoryStore: Not enough space to cache rdd_13_59 in memory! (computed 18.4 MiB so far)
+
+
+    [Stage 5:===========================>                            (53 + 8) / 109]25/11/17 20:01:28 WARN MemoryStore: Not enough space to cache rdd_13_60 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:28 WARN MemoryStore: Not enough space to cache rdd_13_61 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:28 WARN MemoryStore: Not enough space to cache rdd_13_63 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:01:28 WARN MemoryStore: Not enough space to cache rdd_13_64 in memory! (computed 18.1 MiB so far)
+    25/11/17 20:01:28 WARN MemoryStore: Not enough space to cache rdd_13_65 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:28 WARN MemoryStore: Not enough space to cache rdd_13_62 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:28 WARN MemoryStore: Not enough space to cache rdd_13_66 in memory! (computed 18.6 MiB so far)
+    [Stage 5:==============================>                         (60 + 8) / 109]
+
+    25/11/17 20:01:28 WARN MemoryStore: Not enough space to cache rdd_13_67 in memory! (computed 18.7 MiB so far)
+
+
+    [Stage 5:===============================>                        (61 + 8) / 109]25/11/17 20:01:28 WARN MemoryStore: Not enough space to cache rdd_13_68 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:29 WARN MemoryStore: Not enough space to cache rdd_13_69 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:29 WARN MemoryStore: Not enough space to cache rdd_13_71 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:01:29 WARN MemoryStore: Not enough space to cache rdd_13_70 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:29 WARN MemoryStore: Not enough space to cache rdd_13_72 in memory! (computed 18.7 MiB so far)
+    [Stage 5:=================================>                      (66 + 8) / 109]
+
+    25/11/17 20:01:29 WARN MemoryStore: Not enough space to cache rdd_13_73 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:01:29 WARN MemoryStore: Not enough space to cache rdd_13_74 in memory! (computed 17.8 MiB so far)
+    [Stage 5:==================================>                     (68 + 8) / 109]25/11/17 20:01:29 WARN MemoryStore: Not enough space to cache rdd_13_75 in memory! (computed 18.7 MiB so far)
+
+
+    [Stage 5:====================================>                   (71 + 8) / 109]25/11/17 20:01:29 WARN MemoryStore: Not enough space to cache rdd_13_76 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:29 WARN MemoryStore: Not enough space to cache rdd_13_79 in memory! (computed 17.8 MiB so far)
+    25/11/17 20:01:29 WARN MemoryStore: Not enough space to cache rdd_13_77 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:29 WARN MemoryStore: Not enough space to cache rdd_13_78 in memory! (computed 18.7 MiB so far)
+    [Stage 5:====================================>                   (72 + 8) / 109]
+
+    [Stage 5:=====================================>                  (73 + 8) / 109]25/11/17 20:01:30 WARN MemoryStore: Not enough space to cache rdd_13_80 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:30 WARN MemoryStore: Not enough space to cache rdd_13_81 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:30 WARN MemoryStore: Not enough space to cache rdd_13_83 in memory! (computed 18.7 MiB so far)
+    [Stage 5:=======================================>                (76 + 8) / 109]
+
+    25/11/17 20:01:30 WARN MemoryStore: Not enough space to cache rdd_13_82 in memory! (computed 18.2 MiB so far)
+    [Stage 5:=======================================>                (77 + 8) / 109]
+
+    25/11/17 20:01:30 WARN MemoryStore: Not enough space to cache rdd_13_84 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:30 WARN MemoryStore: Not enough space to cache rdd_13_85 in memory! (computed 17.6 MiB so far)
+    25/11/17 20:01:30 WARN MemoryStore: Not enough space to cache rdd_13_86 in memory! (computed 18.7 MiB so far)
+
+
+    [Stage 5:=========================================>              (80 + 9) / 109]25/11/17 20:01:30 WARN MemoryStore: Not enough space to cache rdd_13_87 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:30 WARN MemoryStore: Not enough space to cache rdd_13_88 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:30 WARN MemoryStore: Not enough space to cache rdd_13_89 in memory! (computed 18.4 MiB so far)
+    [Stage 5:===========================================>            (84 + 8) / 109]
+
+    25/11/17 20:01:30 WARN MemoryStore: Not enough space to cache rdd_13_90 in memory! (computed 17.6 MiB so far)
+    25/11/17 20:01:30 WARN MemoryStore: Not enough space to cache rdd_13_91 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_92 in memory! (computed 18.7 MiB so far)
+    [Stage 5:============================================>           (87 + 8) / 109]
+
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_93 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_94 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_95 in memory! (computed 18.6 MiB so far)
+    [Stage 5:==============================================>         (90 + 8) / 109]
+
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_97 in memory! (computed 17.8 MiB so far)
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_96 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_98 in memory! (computed 17.7 MiB so far)
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_99 in memory! (computed 18.7 MiB so far)
+    [Stage 5:===============================================>        (92 + 8) / 109]
+
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_100 in memory! (computed 18.1 MiB so far)
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_101 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_102 in memory! (computed 18.4 MiB so far)
+    [Stage 5:================================================>       (95 + 8) / 109]25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_103 in memory! (computed 18.2 MiB so far)
+
+
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_104 in memory! (computed 17.7 MiB so far)
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_105 in memory! (computed 17.8 MiB so far)
+    25/11/17 20:01:31 WARN MemoryStore: Not enough space to cache rdd_13_106 in memory! (computed 18.2 MiB so far)
+    [Stage 5:==================================================>     (99 + 8) / 109]
+
+    [Stage 5:====================================================>  (105 + 4) / 109][Stage 5:=====================================================> (107 + 2) / 109]
+
+                                                                                    
+
+    Clean records (no parse/missing errors): 169,610,695
+    
+    Schema of the Silver DataFrame:
+    root
+     |-- record_id: string (nullable = true)
+     |-- pickup_datetime: timestamp (nullable = true)
+     |-- pickup_month: integer (nullable = true)
+     |-- pickup_day: integer (nullable = true)
+     |-- pickup_hour: integer (nullable = true)
+     |-- pickup_dayofweek: integer (nullable = true)
+     |-- passenger_count: double (nullable = true)
+     |-- trip_distance: double (nullable = true)
+     |-- payment_type: integer (nullable = true)
+     |-- fare_amount: double (nullable = true)
+     |-- tip_amount: double (nullable = true)
+     |-- tolls_amount: double (nullable = true)
+     |-- total_amount: double (nullable = true)
+     |-- has_missing_values: boolean (nullable = true)
+     |-- has_parse_errors: boolean (nullable = true)
+     |-- parse_errors: array (nullable = true)
+     |    |-- element: string (containsNull = true)
+     |-- ingestion_timestamp: timestamp (nullable = true)
+     |-- source_file: string (nullable = true)
+     |-- processing_batch_id: string (nullable = true)
+     |-- pickup_year: integer (nullable = true)
+     |-- taxi_type: string (nullable = true)
+    
+    
+    Breakdown by taxi_type:
+
+
+    [Stage 8:>                                                        (0 + 8) / 109]
+
+    [Stage 8:====>                                                    (8 + 8) / 109]25/11/17 20:01:34 WARN MemoryStore: Not enough space to cache rdd_13_12 in memory! (computed 71.0 MiB so far)
+    25/11/17 20:01:34 WARN MemoryStore: Not enough space to cache rdd_13_8 in memory! (computed 123.7 MiB so far)
+    [Stage 8:=======>                                                (14 + 8) / 109]
+
+    [Stage 8:============>                                           (24 + 8) / 109]25/11/17 20:01:34 WARN MemoryStore: Not enough space to cache rdd_13_25 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:01:34 WARN MemoryStore: Not enough space to cache rdd_13_33 in memory! (computed 35.3 MiB so far)
+    [Stage 8:==============>                                         (28 + 8) / 109]
+
+    25/11/17 20:01:34 WARN MemoryStore: Not enough space to cache rdd_13_28 in memory! (computed 69.6 MiB so far)
+    25/11/17 20:01:34 WARN MemoryStore: Not enough space to cache rdd_13_27 in memory! (computed 121.0 MiB so far)
+
+
+    25/11/17 20:01:35 WARN MemoryStore: Not enough space to cache rdd_13_35 in memory! (computed 35.3 MiB so far)
+    [Stage 8:==============>                                         (29 + 8) / 109]
+
+    [Stage 8:==================>                                     (36 + 8) / 109]25/11/17 20:01:36 WARN MemoryStore: Not enough space to cache rdd_13_43 in memory! (computed 36.3 MiB so far)
+
+
+    25/11/17 20:01:36 WARN MemoryStore: Not enough space to cache rdd_13_39 in memory! (computed 69.5 MiB so far)
+    25/11/17 20:01:36 WARN MemoryStore: Not enough space to cache rdd_13_36 in memory! (computed 121.0 MiB so far)
+    25/11/17 20:01:36 WARN MemoryStore: Not enough space to cache rdd_13_37 in memory! (computed 69.6 MiB so far)
+
+
+    25/11/17 20:01:37 WARN MemoryStore: Not enough space to cache rdd_13_42 in memory! (computed 71.5 MiB so far)
+
+
+    25/11/17 20:01:37 WARN MemoryStore: Not enough space to cache rdd_13_41 in memory! (computed 71.4 MiB so far)
+
+
+    [Stage 8:====================>                                   (39 + 8) / 109][Stage 8:=====================>                                  (42 + 8) / 109]
+
+    25/11/17 20:01:38 WARN MemoryStore: Not enough space to cache rdd_13_47 in memory! (computed 69.2 MiB so far)
+    25/11/17 20:01:38 WARN MemoryStore: Not enough space to cache rdd_13_49 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:01:38 WARN MemoryStore: Not enough space to cache rdd_13_46 in memory! (computed 120.9 MiB so far)
+    [Stage 8:======================>                                 (44 + 8) / 109]
+
+    25/11/17 20:01:39 WARN MemoryStore: Not enough space to cache rdd_13_50 in memory! (computed 70.4 MiB so far)
+
+
+    [Stage 8:========================>                               (47 + 8) / 109][Stage 8:=========================>                              (50 + 8) / 109]
+
+    25/11/17 20:01:40 WARN MemoryStore: Not enough space to cache rdd_13_52 in memory! (computed 121.5 MiB so far)
+    25/11/17 20:01:40 WARN MemoryStore: Not enough space to cache rdd_13_53 in memory! (computed 119.2 MiB so far)
+    25/11/17 20:01:40 WARN MemoryStore: Not enough space to cache rdd_13_54 in memory! (computed 69.3 MiB so far)
+    25/11/17 20:01:40 WARN MemoryStore: Not enough space to cache rdd_13_58 in memory! (computed 18.6 MiB so far)
+    [Stage 8:==========================>                             (51 + 8) / 109]
+
+    [Stage 8:==========================>                             (52 + 8) / 109]25/11/17 20:01:41 WARN MemoryStore: Not enough space to cache rdd_13_59 in memory! (computed 68.3 MiB so far)
+    25/11/17 20:01:41 WARN MemoryStore: Not enough space to cache rdd_13_60 in memory! (computed 18.2 MiB so far)
+    [Stage 8:===========================>                            (53 + 8) / 109]
+
+    [Stage 8:============================>                           (56 + 8) / 109][Stage 8:==============================>                         (59 + 8) / 109]25/11/17 20:01:41 WARN MemoryStore: Not enough space to cache rdd_13_66 in memory! (computed 18.6 MiB so far)
+
+
+    25/11/17 20:01:42 WARN MemoryStore: Not enough space to cache rdd_13_62 in memory! (computed 68.9 MiB so far)
+    25/11/17 20:01:42 WARN MemoryStore: Not enough space to cache rdd_13_64 in memory! (computed 68.5 MiB so far)
+    25/11/17 20:01:42 WARN MemoryStore: Not enough space to cache rdd_13_68 in memory! (computed 18.2 MiB so far)
+    [Stage 8:===============================>                        (61 + 8) / 109]
+
+    25/11/17 20:01:42 WARN MemoryStore: Not enough space to cache rdd_13_65 in memory! (computed 121.7 MiB so far)
+    25/11/17 20:01:42 WARN MemoryStore: Not enough space to cache rdd_13_63 in memory! (computed 119.9 MiB so far)
+
+
+    [Stage 8:================================>                       (63 + 8) / 109]25/11/17 20:01:43 WARN MemoryStore: Not enough space to cache rdd_13_72 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:01:43 WARN MemoryStore: Not enough space to cache rdd_13_71 in memory! (computed 36.0 MiB so far)
+    [Stage 8:==================================>                     (67 + 8) / 109]
+
+    [Stage 8:==================================>                     (68 + 8) / 109]25/11/17 20:01:43 WARN MemoryStore: Not enough space to cache rdd_13_75 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:01:43 WARN MemoryStore: Not enough space to cache rdd_13_73 in memory! (computed 69.7 MiB so far)
+
+
+    [Stage 8:===================================>                    (70 + 8) / 109]
+
+    [Stage 8:======================================>                 (74 + 8) / 109]25/11/17 20:01:44 WARN MemoryStore: Not enough space to cache rdd_13_78 in memory! (computed 36.3 MiB so far)
+
+
+    25/11/17 20:01:44 WARN MemoryStore: Not enough space to cache rdd_13_76 in memory! (computed 69.1 MiB so far)
+    25/11/17 20:01:44 WARN MemoryStore: Not enough space to cache rdd_13_77 in memory! (computed 69.3 MiB so far)
+
+
+    25/11/17 20:01:45 WARN MemoryStore: Not enough space to cache rdd_13_81 in memory! (computed 118.3 MiB so far)
+
+
+    [Stage 8:======================================>                 (75 + 8) / 109][Stage 8:========================================>               (78 + 8) / 109]
+
+    [Stage 8:=========================================>              (81 + 8) / 109]25/11/17 20:01:46 WARN MemoryStore: Not enough space to cache rdd_13_82 in memory! (computed 118.6 MiB so far)
+
+
+    25/11/17 20:01:46 WARN MemoryStore: Not enough space to cache rdd_13_84 in memory! (computed 118.8 MiB so far)
+    25/11/17 20:01:46 WARN MemoryStore: Not enough space to cache rdd_13_88 in memory! (computed 35.1 MiB so far)
+    25/11/17 20:01:46 WARN MemoryStore: Not enough space to cache rdd_13_85 in memory! (computed 116.7 MiB so far)
+    [Stage 8:==========================================>             (82 + 8) / 109]
+
+    [Stage 8:=============================================>          (88 + 8) / 109]
+
+    25/11/17 20:01:47 WARN MemoryStore: Not enough space to cache rdd_13_89 in memory! (computed 119.7 MiB so far)
+    25/11/17 20:01:47 WARN MemoryStore: Not enough space to cache rdd_13_95 in memory! (computed 18.6 MiB so far)
+
+
+    25/11/17 20:01:48 WARN MemoryStore: Not enough space to cache rdd_13_92 in memory! (computed 70.3 MiB so far)
+
+
+    25/11/17 20:01:48 WARN MemoryStore: Not enough space to cache rdd_13_94 in memory! (computed 120.2 MiB so far)
+    [Stage 8:=============================================>          (89 + 8) / 109]
+
+    [Stage 8:================================================>       (94 + 8) / 109]25/11/17 20:01:49 WARN MemoryStore: Not enough space to cache rdd_13_98 in memory! (computed 67.4 MiB so far)
+    25/11/17 20:01:49 WARN MemoryStore: Not enough space to cache rdd_13_102 in memory! (computed 18.4 MiB so far)
+
+
+    [Stage 8:=================================================>      (96 + 8) / 109]
+
+    25/11/17 20:01:49 WARN MemoryStore: Not enough space to cache rdd_13_96 in memory! (computed 118.4 MiB so far)
+    25/11/17 20:01:49 WARN MemoryStore: Not enough space to cache rdd_13_101 in memory! (computed 70.2 MiB so far)
+    25/11/17 20:01:49 WARN MemoryStore: Not enough space to cache rdd_13_97 in memory! (computed 118.2 MiB so far)
+
+
+    [Stage 8:=================================================>      (97 + 8) / 109]
+
+    [Stage 8:===================================================>   (102 + 7) / 109]25/11/17 20:01:50 WARN MemoryStore: Not enough space to cache rdd_13_103 in memory! (computed 118.0 MiB so far)
+
+
+    25/11/17 20:01:51 WARN MemoryStore: Not enough space to cache rdd_13_108 in memory! (computed 34.7 MiB so far)
+    25/11/17 20:01:51 WARN MemoryStore: Not enough space to cache rdd_13_107 in memory! (computed 34.7 MiB so far)
+    [Stage 8:====================================================>  (105 + 4) / 109]
+
+    [Stage 8:=====================================================> (107 + 2) / 109]
+
+                                                                                    
+
+    +---------+---------+
+    |taxi_type|    count|
+    +---------+---------+
+    |   yellow|165631126|
+    |    green|  3979569|
+    +---------+---------+
+    
+    
+    Breakdown by year:
+
+
+    25/11/17 20:01:52 WARN MemoryStore: Not enough space to cache rdd_13_0 in memory! (computed 36.1 MiB so far)
+    25/11/17 20:01:52 WARN MemoryStore: Not enough space to cache rdd_13_6 in memory! (computed 35.7 MiB so far)
+    25/11/17 20:01:52 WARN MemoryStore: Not enough space to cache rdd_13_1 in memory! (computed 35.7 MiB so far)
+    25/11/17 20:01:52 WARN MemoryStore: Not enough space to cache rdd_13_2 in memory! (computed 35.9 MiB so far)
+    25/11/17 20:01:52 WARN MemoryStore: Not enough space to cache rdd_13_7 in memory! (computed 34.6 MiB so far)
+
+
+    25/11/17 20:01:53 WARN MemoryStore: Not enough space to cache rdd_13_5 in memory! (computed 71.5 MiB so far)
+    25/11/17 20:01:53 WARN MemoryStore: Not enough space to cache rdd_13_3 in memory! (computed 69.7 MiB so far)
+
+
+    [Stage 11:>                                                       (0 + 8) / 109]
+
+    25/11/17 20:01:53 WARN MemoryStore: Not enough space to cache rdd_13_4 in memory! (computed 123.0 MiB so far)
+
+
+    [Stage 11:=>                                                      (2 + 8) / 109]
+
+    [Stage 11:===>                                                    (6 + 8) / 109][Stage 11:====>                                                   (8 + 8) / 109]25/11/17 20:01:54 WARN MemoryStore: Not enough space to cache rdd_13_9 in memory! (computed 123.3 MiB so far)
+
+
+    25/11/17 20:01:54 WARN MemoryStore: Not enough space to cache rdd_13_10 in memory! (computed 123.0 MiB so far)
+    25/11/17 20:01:54 WARN MemoryStore: Not enough space to cache rdd_13_15 in memory! (computed 121.6 MiB so far)
+    25/11/17 20:01:54 WARN MemoryStore: Not enough space to cache rdd_13_13 in memory! (computed 121.4 MiB so far)
+
+
+    [Stage 11:=====>                                                 (10 + 8) / 109][Stage 11:=======>                                               (15 + 8) / 109]
+
+    25/11/17 20:01:55 WARN MemoryStore: Not enough space to cache rdd_13_22 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:01:55 WARN MemoryStore: Not enough space to cache rdd_13_16 in memory! (computed 120.4 MiB so far)
+    [Stage 11:========>                                              (16 + 8) / 109]25/11/17 20:01:55 WARN MemoryStore: Not enough space to cache rdd_13_21 in memory! (computed 71.4 MiB so far)
+
+
+    25/11/17 20:01:55 WARN MemoryStore: Not enough space to cache rdd_13_20 in memory! (computed 122.5 MiB so far)
+    25/11/17 20:01:55 WARN MemoryStore: Not enough space to cache rdd_13_17 in memory! (computed 188.9 MiB so far)
+    [Stage 11:========>                                              (17 + 8) / 109]
+
+    [Stage 11:==========>                                            (21 + 8) / 109]25/11/17 20:01:56 WARN MemoryStore: Not enough space to cache rdd_13_30 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:56 WARN MemoryStore: Not enough space to cache rdd_13_29 in memory! (computed 67.4 MiB so far)
+    25/11/17 20:01:56 WARN MemoryStore: Not enough space to cache rdd_13_28 in memory! (computed 69.6 MiB so far)
+    [Stage 11:============>                                          (24 + 8) / 109]
+
+    25/11/17 20:01:56 WARN MemoryStore: Not enough space to cache rdd_13_24 in memory! (computed 122.4 MiB so far)
+    25/11/17 20:01:56 WARN MemoryStore: Not enough space to cache rdd_13_31 in memory! (computed 122.0 MiB so far)
+    [Stage 11:=============>                                         (27 + 8) / 109]
+
+    25/11/17 20:01:56 WARN MemoryStore: Not enough space to cache rdd_13_33 in memory! (computed 121.0 MiB so far)
+    [Stage 11:===============>                                       (31 + 8) / 109]25/11/17 20:01:56 WARN MemoryStore: Not enough space to cache rdd_13_35 in memory! (computed 69.6 MiB so far)
+    25/11/17 20:01:56 WARN MemoryStore: Not enough space to cache rdd_13_37 in memory! (computed 69.6 MiB so far)
+
+
+    [Stage 11:=================>                                     (34 + 8) / 109]25/11/17 20:01:57 WARN MemoryStore: Not enough space to cache rdd_13_36 in memory! (computed 121.0 MiB so far)
+    25/11/17 20:01:57 WARN MemoryStore: Not enough space to cache rdd_13_38 in memory! (computed 122.3 MiB so far)
+    [Stage 11:==================>                                    (36 + 8) / 109]
+
+    25/11/17 20:01:57 WARN MemoryStore: Not enough space to cache rdd_13_39 in memory! (computed 119.4 MiB so far)
+    25/11/17 20:01:57 WARN MemoryStore: Not enough space to cache rdd_13_40 in memory! (computed 122.3 MiB so far)
+    [Stage 11:===================>                                   (39 + 8) / 109]
+
+    25/11/17 20:01:57 WARN MemoryStore: Not enough space to cache rdd_13_45 in memory! (computed 71.4 MiB so far)
+    [Stage 11:=====================>                                 (42 + 8) / 109]25/11/17 20:01:57 WARN MemoryStore: Not enough space to cache rdd_13_44 in memory! (computed 120.8 MiB so far)
+
+
+    25/11/17 20:01:57 WARN MemoryStore: Not enough space to cache rdd_13_49 in memory! (computed 71.5 MiB so far)
+    [Stage 11:======================>                                (44 + 8) / 109]25/11/17 20:01:58 WARN MemoryStore: Not enough space to cache rdd_13_51 in memory! (computed 36.3 MiB so far)
+
+
+    [Stage 11:========================>                              (48 + 8) / 109]25/11/17 20:01:58 WARN MemoryStore: Not enough space to cache rdd_13_52 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:01:58 WARN MemoryStore: Not enough space to cache rdd_13_53 in memory! (computed 69.4 MiB so far)
+    25/11/17 20:01:58 WARN MemoryStore: Not enough space to cache rdd_13_50 in memory! (computed 120.0 MiB so far)
+
+
+    [Stage 11:=========================>                             (51 + 8) / 109]25/11/17 20:01:58 WARN MemoryStore: Not enough space to cache rdd_13_54 in memory! (computed 119.5 MiB so far)
+    25/11/17 20:01:58 WARN MemoryStore: Failed to reserve initial memory threshold of 1024.0 KiB for computing block rdd_13_59 in memory.
+    25/11/17 20:01:58 WARN MemoryStore: Not enough space to cache rdd_13_59 in memory! (computed 384.0 B so far)
+    25/11/17 20:01:58 WARN MemoryStore: Not enough space to cache rdd_13_55 in memory! (computed 119.3 MiB so far)
+
+
+    [Stage 11:===========================>                           (54 + 8) / 109]25/11/17 20:01:58 WARN MemoryStore: Not enough space to cache rdd_13_60 in memory! (computed 69.0 MiB so far)
+    25/11/17 20:01:58 WARN MemoryStore: Not enough space to cache rdd_13_61 in memory! (computed 69.9 MiB so far)
+    25/11/17 20:01:58 WARN MemoryStore: Not enough space to cache rdd_13_58 in memory! (computed 120.5 MiB so far)
+    [Stage 11:============================>                          (57 + 8) / 109]
+
+    [Stage 11:=============================>                         (58 + 8) / 109]25/11/17 20:01:59 WARN MemoryStore: Not enough space to cache rdd_13_62 in memory! (computed 118.9 MiB so far)
+    25/11/17 20:01:59 WARN MemoryStore: Not enough space to cache rdd_13_65 in memory! (computed 71.5 MiB so far)
+    [Stage 11:===============================>                       (62 + 8) / 109]
+
+    25/11/17 20:01:59 WARN MemoryStore: Failed to reserve initial memory threshold of 1024.0 KiB for computing block rdd_13_70 in memory.
+    25/11/17 20:01:59 WARN MemoryStore: Not enough space to cache rdd_13_70 in memory! (computed 384.0 B so far)
+    [Stage 11:================================>                      (64 + 8) / 109]25/11/17 20:01:59 WARN MemoryStore: Not enough space to cache rdd_13_68 in memory! (computed 118.6 MiB so far)
+    25/11/17 20:01:59 WARN MemoryStore: Not enough space to cache rdd_13_71 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:01:59 WARN MemoryStore: Not enough space to cache rdd_13_72 in memory! (computed 18.7 MiB so far)
+
+
+    [Stage 11:==================================>                    (68 + 8) / 109]25/11/17 20:01:59 WARN MemoryStore: Not enough space to cache rdd_13_75 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:01:59 WARN MemoryStore: Not enough space to cache rdd_13_73 in memory! (computed 69.7 MiB so far)
+    [Stage 11:===================================>                   (71 + 8) / 109]
+
+    25/11/17 20:02:00 WARN MemoryStore: Not enough space to cache rdd_13_77 in memory! (computed 36.1 MiB so far)
+    25/11/17 20:02:00 WARN MemoryStore: Not enough space to cache rdd_13_74 in memory! (computed 118.1 MiB so far)
+    [Stage 11:====================================>                  (73 + 9) / 109]
+
+    [Stage 11:======================================>                (76 + 8) / 109]25/11/17 20:02:00 WARN MemoryStore: Not enough space to cache rdd_13_78 in memory! (computed 121.2 MiB so far)
+    25/11/17 20:02:00 WARN MemoryStore: Not enough space to cache rdd_13_82 in memory! (computed 68.8 MiB so far)
+    25/11/17 20:02:00 WARN MemoryStore: Not enough space to cache rdd_13_85 in memory! (computed 17.6 MiB so far)
+    25/11/17 20:02:00 WARN MemoryStore: Not enough space to cache rdd_13_84 in memory! (computed 18.2 MiB so far)
+    [Stage 11:========================================>              (80 + 8) / 109]
+
+    25/11/17 20:02:00 WARN MemoryStore: Not enough space to cache rdd_13_87 in memory! (computed 35.2 MiB so far)
+    25/11/17 20:02:00 WARN MemoryStore: Not enough space to cache rdd_13_86 in memory! (computed 36.3 MiB so far)
+    [Stage 11:========================================>              (81 + 8) / 109]
+
+    25/11/17 20:02:01 WARN MemoryStore: Not enough space to cache rdd_13_90 in memory! (computed 34.2 MiB so far)
+    [Stage 11:===========================================>           (87 + 8) / 109]25/11/17 20:02:01 WARN MemoryStore: Not enough space to cache rdd_13_91 in memory! (computed 69.8 MiB so far)
+
+
+    [Stage 11:============================================>          (88 + 8) / 109]25/11/17 20:02:01 WARN MemoryStore: Not enough space to cache rdd_13_93 in memory! (computed 69.7 MiB so far)
+    25/11/17 20:02:01 WARN MemoryStore: Not enough space to cache rdd_13_95 in memory! (computed 69.7 MiB so far)
+    [Stage 11:==============================================>        (92 + 8) / 109]
+
+    25/11/17 20:02:01 WARN MemoryStore: Not enough space to cache rdd_13_97 in memory! (computed 68.0 MiB so far)
+    25/11/17 20:02:01 WARN MemoryStore: Not enough space to cache rdd_13_100 in memory! (computed 34.8 MiB so far)
+
+
+    [Stage 11:================================================>      (96 + 8) / 109]25/11/17 20:02:02 WARN MemoryStore: Not enough space to cache rdd_13_103 in memory! (computed 68.8 MiB so far)
+    25/11/17 20:02:02 WARN MemoryStore: Not enough space to cache rdd_13_101 in memory! (computed 120.4 MiB so far)
+    [Stage 11:=================================================>     (99 + 8) / 109]
+
+    [Stage 11:==================================================>   (102 + 7) / 109]25/11/17 20:02:02 WARN MemoryStore: Not enough space to cache rdd_13_102 in memory! (computed 186.8 MiB so far)
+    25/11/17 20:02:02 WARN MemoryStore: Not enough space to cache rdd_13_106 in memory! (computed 121.0 MiB so far)
+    [Stage 11:=====================================================>(108 + 1) / 109]
+
+    +-----------+--------+
+    |pickup_year|   count|
+    +-----------+--------+
+    |       2020|25045207|
+    |       2021|30081583|
+    |       2022|39037373|
+    |       2023|37732224|
+    |       2024|37714308|
+    +-----------+--------+
+    
+
+
+                                                                                    
+
+## 3. Gold Analysis 1: Hourly Demand Patterns
+
+**Business Question:** What are the busiest hours of the day for taxi pickups? How does this pattern differ between Yellow and Green taxis?
+
+
+```python
+print("--- Generating Gold Table 1: Hourly Demand Patterns ---")
+
+# Use the existing pickup_hour column from Silver layer
+# No need to derive it again - it's already in the schema
+gold_hourly_demand = silver_df_clean.groupBy("taxi_type", "pickup_hour") \
+    .agg(
+        count("*").alias("total_trips"),
+        avg("total_amount").alias("average_fare"),
+        avg("trip_distance").alias("average_distance_miles")
+    ) \
+    .orderBy("taxi_type", "pickup_hour")
+
+print("\n--- Gold Table 1: Hourly Demand Patterns ---")
+gold_hourly_demand.show(48) # Show all 48 rows (24 hours * 2 taxi types)
+
+# Save the Gold table to Parquet for future use by a dashboard.
+print(f"Saving hourly_demand Gold table to: {GOLD_BASE_PATH}/hourly_demand")
+gold_hourly_demand.write.mode("overwrite").parquet(f"{GOLD_BASE_PATH}/hourly_demand")
+print("✓ Saved successfully.")
+```
+
+    --- Generating Gold Table 1: Hourly Demand Patterns ---
+    
+    --- Gold Table 1: Hourly Demand Patterns ---
+
+
+    25/11/17 20:02:03 WARN MemoryStore: Not enough space to cache rdd_13_0 in memory! (computed 70.4 MiB so far)
+
+
+    [Stage 14:>                                                       (0 + 8) / 109]25/11/17 20:02:03 WARN MemoryStore: Not enough space to cache rdd_13_6 in memory! (computed 69.8 MiB so far)
+    25/11/17 20:02:03 WARN MemoryStore: Not enough space to cache rdd_13_2 in memory! (computed 71.0 MiB so far)
+    25/11/17 20:02:03 WARN MemoryStore: Not enough space to cache rdd_13_5 in memory! (computed 71.5 MiB so far)
+    25/11/17 20:02:03 WARN MemoryStore: Not enough space to cache rdd_13_1 in memory! (computed 70.8 MiB so far)
+    25/11/17 20:02:03 WARN MemoryStore: Not enough space to cache rdd_13_7 in memory! (computed 68.8 MiB so far)
+
+
+    [Stage 14:=>                                                      (2 + 8) / 109][Stage 14:====>                                                   (8 + 8) / 109]
+
+    25/11/17 20:02:04 WARN MemoryStore: Not enough space to cache rdd_13_9 in memory! (computed 123.3 MiB so far)
+    25/11/17 20:02:04 WARN MemoryStore: Not enough space to cache rdd_13_11 in memory! (computed 71.5 MiB so far)
+    25/11/17 20:02:04 WARN MemoryStore: Not enough space to cache rdd_13_10 in memory! (computed 123.0 MiB so far)
+    25/11/17 20:02:04 WARN MemoryStore: Not enough space to cache rdd_13_13 in memory! (computed 121.4 MiB so far)
+
+
+    25/11/17 20:02:04 WARN MemoryStore: Not enough space to cache rdd_13_15 in memory! (computed 187.6 MiB so far)
+    [Stage 14:======>                                                (12 + 8) / 109]
+
+    25/11/17 20:02:04 WARN MemoryStore: Not enough space to cache rdd_13_17 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:04 WARN MemoryStore: Not enough space to cache rdd_13_19 in memory! (computed 36.1 MiB so far)
+    [Stage 14:========>                                              (16 + 8) / 109]25/11/17 20:02:05 WARN MemoryStore: Not enough space to cache rdd_13_18 in memory! (computed 120.4 MiB so far)
+    25/11/17 20:02:05 WARN MemoryStore: Not enough space to cache rdd_13_21 in memory! (computed 71.4 MiB so far)
+
+
+    25/11/17 20:02:05 WARN MemoryStore: Not enough space to cache rdd_13_20 in memory! (computed 122.5 MiB so far)
+    [Stage 14:========>                                              (17 + 8) / 109]
+
+    [Stage 14:==========>                                            (21 + 8) / 109]25/11/17 20:02:05 WARN MemoryStore: Not enough space to cache rdd_13_26 in memory! (computed 36.2 MiB so far)
+    25/11/17 20:02:05 WARN MemoryStore: Not enough space to cache rdd_13_24 in memory! (computed 122.4 MiB so far)
+    25/11/17 20:02:05 WARN MemoryStore: Not enough space to cache rdd_13_28 in memory! (computed 69.6 MiB so far)
+    25/11/17 20:02:06 WARN MemoryStore: Not enough space to cache rdd_13_29 in memory! (computed 67.4 MiB so far)
+    25/11/17 20:02:06 WARN MemoryStore: Not enough space to cache rdd_13_27 in memory! (computed 121.0 MiB so far)
+    [Stage 14:============>                                          (24 + 8) / 109]
+
+    [Stage 14:============>                                          (25 + 8) / 109]25/11/17 20:02:06 WARN MemoryStore: Not enough space to cache rdd_13_33 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:02:06 WARN MemoryStore: Not enough space to cache rdd_13_32 in memory! (computed 122.0 MiB so far)
+    [Stage 14:===============>                                       (31 + 8) / 109]
+
+    25/11/17 20:02:06 WARN MemoryStore: Not enough space to cache rdd_13_34 in memory! (computed 119.7 MiB so far)
+
+
+    [Stage 14:================>                                      (32 + 8) / 109]25/11/17 20:02:06 WARN MemoryStore: Not enough space to cache rdd_13_39 in memory! (computed 35.3 MiB so far)
+
+
+    25/11/17 20:02:07 WARN MemoryStore: Not enough space to cache rdd_13_41 in memory! (computed 36.2 MiB so far)
+    25/11/17 20:02:07 WARN MemoryStore: Not enough space to cache rdd_13_42 in memory! (computed 18.7 MiB so far)
+    [Stage 14:==================>                                    (36 + 8) / 109]25/11/17 20:02:07 WARN MemoryStore: Not enough space to cache rdd_13_43 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:07 WARN MemoryStore: Not enough space to cache rdd_13_44 in memory! (computed 35.3 MiB so far)
+
+
+    [Stage 14:====================>                                  (40 + 8) / 109]25/11/17 20:02:07 WARN MemoryStore: Not enough space to cache rdd_13_46 in memory! (computed 69.6 MiB so far)
+    25/11/17 20:02:07 WARN MemoryStore: Not enough space to cache rdd_13_47 in memory! (computed 69.2 MiB so far)
+    [Stage 14:====================>                                  (41 + 8) / 109]
+
+    [Stage 14:=====================>                                 (42 + 8) / 109]25/11/17 20:02:08 WARN MemoryStore: Not enough space to cache rdd_13_50 in memory! (computed 36.3 MiB so far)
+    [Stage 14:======================>                                (45 + 8) / 109]
+
+    25/11/17 20:02:08 WARN MemoryStore: Not enough space to cache rdd_13_51 in memory! (computed 71.3 MiB so far)
+    25/11/17 20:02:08 WARN MemoryStore: Not enough space to cache rdd_13_52 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:08 WARN MemoryStore: Not enough space to cache rdd_13_54 in memory! (computed 18.2 MiB so far)
+    [Stage 14:========================>                              (48 + 8) / 109]
+
+    25/11/17 20:02:08 WARN MemoryStore: Not enough space to cache rdd_13_55 in memory! (computed 69.2 MiB so far)
+    [Stage 14:=========================>                             (50 + 8) / 109]
+
+    25/11/17 20:02:08 WARN MemoryStore: Not enough space to cache rdd_13_56 in memory! (computed 70.7 MiB so far)
+    25/11/17 20:02:08 WARN MemoryStore: Not enough space to cache rdd_13_59 in memory! (computed 18.4 MiB so far)
+    25/11/17 20:02:08 WARN MemoryStore: Not enough space to cache rdd_13_60 in memory! (computed 18.2 MiB so far)
+    [Stage 14:==========================>                            (53 + 8) / 109]25/11/17 20:02:08 WARN MemoryStore: Not enough space to cache rdd_13_57 in memory! (computed 118.4 MiB so far)
+
+
+    [Stage 14:===========================>                           (55 + 8) / 109]25/11/17 20:02:09 WARN MemoryStore: Not enough space to cache rdd_13_58 in memory! (computed 120.5 MiB so far)
+    25/11/17 20:02:09 WARN MemoryStore: Not enough space to cache rdd_13_61 in memory! (computed 69.9 MiB so far)
+
+
+    [Stage 14:=============================>                         (58 + 8) / 109]25/11/17 20:02:09 WARN MemoryStore: Not enough space to cache rdd_13_66 in memory! (computed 36.2 MiB so far)
+    [Stage 14:==============================>                        (61 + 8) / 109]
+
+    25/11/17 20:02:09 WARN MemoryStore: Not enough space to cache rdd_13_68 in memory! (computed 68.7 MiB so far)
+    25/11/17 20:02:09 WARN MemoryStore: Not enough space to cache rdd_13_67 in memory! (computed 71.4 MiB so far)
+    [Stage 14:===============================>                       (62 + 8) / 109]
+
+    25/11/17 20:02:10 WARN MemoryStore: Not enough space to cache rdd_13_70 in memory! (computed 70.6 MiB so far)
+    [Stage 14:================================>                      (65 + 8) / 109]25/11/17 20:02:10 WARN MemoryStore: Not enough space to cache rdd_13_69 in memory! (computed 118.7 MiB so far)
+
+
+    [Stage 14:==================================>                    (69 + 8) / 109]25/11/17 20:02:10 WARN MemoryStore: Not enough space to cache rdd_13_73 in memory! (computed 69.7 MiB so far)
+    25/11/17 20:02:10 WARN MemoryStore: Not enough space to cache rdd_13_75 in memory! (computed 70.5 MiB so far)
+    25/11/17 20:02:10 WARN MemoryStore: Not enough space to cache rdd_13_72 in memory! (computed 121.2 MiB so far)
+    [Stage 14:===================================>                   (71 + 8) / 109]
+
+    25/11/17 20:02:10 WARN MemoryStore: Not enough space to cache rdd_13_78 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:10 WARN MemoryStore: Not enough space to cache rdd_13_77 in memory! (computed 69.3 MiB so far)
+    25/11/17 20:02:10 WARN MemoryStore: Not enough space to cache rdd_13_79 in memory! (computed 68.0 MiB so far)
+    [Stage 14:====================================>                  (73 + 8) / 109]
+
+    [Stage 14:======================================>                (77 + 8) / 109]25/11/17 20:02:11 WARN MemoryStore: Not enough space to cache rdd_13_81 in memory! (computed 68.4 MiB so far)
+    25/11/17 20:02:11 WARN MemoryStore: Not enough space to cache rdd_13_80 in memory! (computed 118.2 MiB so far)
+    25/11/17 20:02:11 WARN MemoryStore: Not enough space to cache rdd_13_82 in memory! (computed 68.8 MiB so far)
+    [Stage 14:========================================>              (80 + 8) / 109]
+
+    25/11/17 20:02:11 WARN MemoryStore: Not enough space to cache rdd_13_85 in memory! (computed 67.2 MiB so far)
+    [Stage 14:========================================>              (81 + 8) / 109]25/11/17 20:02:11 WARN MemoryStore: Not enough space to cache rdd_13_86 in memory! (computed 120.1 MiB so far)
+
+
+    25/11/17 20:02:11 WARN MemoryStore: Not enough space to cache rdd_13_92 in memory! (computed 18.7 MiB so far)
+    [Stage 14:==========================================>            (85 + 8) / 109]
+
+    25/11/17 20:02:11 WARN MemoryStore: Not enough space to cache rdd_13_89 in memory! (computed 119.7 MiB so far)
+    [Stage 14:============================================>          (88 + 8) / 109]25/11/17 20:02:11 WARN MemoryStore: Not enough space to cache rdd_13_95 in memory! (computed 35.7 MiB so far)
+    25/11/17 20:02:11 WARN MemoryStore: Not enough space to cache rdd_13_94 in memory! (computed 34.8 MiB so far)
+
+
+    [Stage 14:=============================================>         (90 + 8) / 109]25/11/17 20:02:12 WARN MemoryStore: Not enough space to cache rdd_13_97 in memory! (computed 68.0 MiB so far)
+    [Stage 14:===============================================>       (94 + 8) / 109]
+
+    25/11/17 20:02:12 WARN MemoryStore: Not enough space to cache rdd_13_103 in memory! (computed 18.2 MiB so far)
+    [Stage 14:================================================>      (96 + 8) / 109]25/11/17 20:02:12 WARN MemoryStore: Not enough space to cache rdd_13_99 in memory! (computed 119.0 MiB so far)
+
+
+    [Stage 14:=================================================>    (100 + 8) / 109]25/11/17 20:02:12 WARN MemoryStore: Not enough space to cache rdd_13_105 in memory! (computed 68.2 MiB so far)
+    25/11/17 20:02:12 WARN MemoryStore: Not enough space to cache rdd_13_107 in memory! (computed 68.5 MiB so far)
+    [Stage 14:==================================================>   (102 + 7) / 109]
+
+    [Stage 14:====================================================> (105 + 4) / 109][Stage 14:=====================================================>(108 + 1) / 109]
+
+                                                                                    
+
+    +---------+-----------+-----------+------------------+----------------------+
+    |taxi_type|pickup_hour|total_trips|      average_fare|average_distance_miles|
+    +---------+-----------+-----------+------------------+----------------------+
+    |    green|          0|      75278| 19.39032293631398|    3.0645581710459875|
+    |    green|          1|      51712|19.275450185642306|    3.4805199953589083|
+    |    green|          2|      35343| 20.83310839487262|     3.068502390855335|
+    |    green|          3|      27819| 22.80095078902901|    3.2369139796541972|
+    |    green|          4|      24008|24.636899366877763|    3.5958542985671462|
+    |    green|          5|      25667|27.872124128257546|     6.584025402267502|
+    |    green|          6|      64116| 22.04130794185284|     4.817474889263197|
+    |    green|          7|     139480|18.941843275022805|     3.009843275021512|
+    |    green|          8|     189252|18.687695665044128|    3.7145034662777627|
+    |    green|          9|     210250|18.885194387639235|    3.2972099881093797|
+    |    green|         10|     215714|19.022903983984914|    2.9069898569402044|
+    |    green|         11|     219814|  19.2433010181399|     3.000153447915056|
+    |    green|         12|     222779| 19.20901126228879|    3.0429151311389204|
+    |    green|         13|     222656|19.317398543050547|     3.430716576243165|
+    |    green|         14|     252716|19.253756548860714|     4.220210829547804|
+    |    green|         15|     277802|19.363076939699113|     2.886787280149168|
+    |    green|         16|     290710|20.301820095636167|    3.2373839221216962|
+    |    green|         17|     301557|19.690009484118598|    3.0011732110347245|
+    |    green|         18|     297342|18.989163387621435|     3.031123924638959|
+    |    green|         19|     248424| 18.62613133192231|    2.8788332045212965|
+    |    green|         20|     191104|18.534748880195206|     2.869615235683195|
+    |    green|         21|     157880|19.518207562708405|    3.0429555991892507|
+    |    green|         22|     131231| 20.41540817337464|    3.7239722321707536|
+    |    green|         23|     106915|19.909551512883315|     3.401693214235607|
+    |   yellow|          0|    4268327|24.743487073509336|    3.9233112645774306|
+    |   yellow|          1|    2822761|22.742953558589978|     3.510794091316974|
+    |   yellow|          2|    1859047|21.500413405361634|     3.296518651760819|
+    |   yellow|          3|    1221766|22.333773087480502|     3.460542182381895|
+    |   yellow|          4|     821002| 27.58528562658731|      4.66132446693187|
+    |   yellow|          5|     984189|31.106281740599496|     6.364303512841536|
+    |   yellow|          6|    2466815|25.293016424011526|     4.666941367715051|
+    |   yellow|          7|    4704750|22.517381469794397|    3.6201694266432836|
+    |   yellow|          8|    6453033| 21.84963679715157|     3.110241106778781|
+    |   yellow|          9|    7277276|22.048197038293022|    3.0788052301438054|
+    |   yellow|         10|    7983733| 22.12833075705932|    3.0779767046317805|
+    |   yellow|         11|    8666026| 22.18407997853426|     2.964273172039874|
+    |   yellow|         12|    9418804|22.557780948627975|      3.05285383154804|
+    |   yellow|         13|    9693203|23.262893551291356|    3.1976039024458673|
+    |   yellow|         14|   10403682| 23.89763664729959|     3.344178587926858|
+    |   yellow|         15|   10655218|24.065330393995136|    3.4583251558062993|
+    |   yellow|         16|   10524114|25.586933064392415|      3.34160835296919|
+    |   yellow|         17|   11311387|24.486773199434126|     3.123024206492096|
+    |   yellow|         18|   11745768|23.348644711016323|    2.9538767043585445|
+    |   yellow|         19|   10436596|23.238924063942616|    3.2509605421154646|
+    |   yellow|         20|    9044623|23.400248431587507|     3.351626674765777|
+    |   yellow|         21|    8745823|23.754693800691513|    3.4472943358218053|
+    |   yellow|         22|    7938289| 24.48141493841293|    3.6438737680122255|
+    |   yellow|         23|    6184894|25.366922367630828|    3.9481333115814143|
+    +---------+-----------+-----------+------------------+----------------------+
+    
+    Saving hourly_demand Gold table to: /home/ubuntu/project/gold_layer_data/hourly_demand
+
+
+    25/11/17 20:02:14 WARN MemoryStore: Not enough space to cache rdd_13_4 in memory! (computed 18.4 MiB so far)
+    25/11/17 20:02:14 WARN MemoryStore: Not enough space to cache rdd_13_0 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:02:14 WARN MemoryStore: Not enough space to cache rdd_13_1 in memory! (computed 18.1 MiB so far)
+    25/11/17 20:02:14 WARN MemoryStore: Not enough space to cache rdd_13_2 in memory! (computed 35.9 MiB so far)
+    25/11/17 20:02:14 WARN MemoryStore: Not enough space to cache rdd_13_6 in memory! (computed 35.7 MiB so far)
+    25/11/17 20:02:14 WARN MemoryStore: Not enough space to cache rdd_13_7 in memory! (computed 34.6 MiB so far)
+
+
+    25/11/17 20:02:14 WARN MemoryStore: Not enough space to cache rdd_13_5 in memory! (computed 123.5 MiB so far)
+    25/11/17 20:02:14 WARN MemoryStore: Not enough space to cache rdd_13_3 in memory! (computed 119.8 MiB so far)
+
+
+    [Stage 17:>                                                       (0 + 8) / 109][Stage 17:====>                                                   (8 + 8) / 109]
+
+    25/11/17 20:02:14 WARN MemoryStore: Not enough space to cache rdd_13_10 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:14 WARN MemoryStore: Not enough space to cache rdd_13_11 in memory! (computed 71.5 MiB so far)
+    25/11/17 20:02:14 WARN MemoryStore: Not enough space to cache rdd_13_8 in memory! (computed 71.5 MiB so far)
+    25/11/17 20:02:15 WARN MemoryStore: Not enough space to cache rdd_13_9 in memory! (computed 123.3 MiB so far)
+
+
+    25/11/17 20:02:15 WARN MemoryStore: Not enough space to cache rdd_13_12 in memory! (computed 122.5 MiB so far)
+    25/11/17 20:02:15 WARN MemoryStore: Not enough space to cache rdd_13_13 in memory! (computed 121.4 MiB so far)
+    25/11/17 20:02:15 WARN MemoryStore: Not enough space to cache rdd_13_15 in memory! (computed 121.6 MiB so far)
+
+
+    [Stage 17:======>                                                (12 + 8) / 109][Stage 17:========>                                              (16 + 8) / 109]
+
+    25/11/17 20:02:15 WARN MemoryStore: Not enough space to cache rdd_13_21 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:15 WARN MemoryStore: Not enough space to cache rdd_13_19 in memory! (computed 71.0 MiB so far)
+    25/11/17 20:02:15 WARN MemoryStore: Not enough space to cache rdd_13_16 in memory! (computed 120.4 MiB so far)
+
+
+    25/11/17 20:02:15 WARN MemoryStore: Not enough space to cache rdd_13_17 in memory! (computed 188.9 MiB so far)
+
+
+    [Stage 17:===========>                                           (22 + 8) / 109]25/11/17 20:02:16 WARN MemoryStore: Not enough space to cache rdd_13_29 in memory! (computed 67.4 MiB so far)
+    25/11/17 20:02:16 WARN MemoryStore: Not enough space to cache rdd_13_28 in memory! (computed 69.6 MiB so far)
+    25/11/17 20:02:16 WARN MemoryStore: Not enough space to cache rdd_13_31 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:02:16 WARN MemoryStore: Not enough space to cache rdd_13_24 in memory! (computed 122.4 MiB so far)
+    25/11/17 20:02:16 WARN MemoryStore: Not enough space to cache rdd_13_30 in memory! (computed 122.1 MiB so far)
+    25/11/17 20:02:16 WARN MemoryStore: Not enough space to cache rdd_13_26 in memory! (computed 122.9 MiB so far)
+    [Stage 17:============>                                          (25 + 8) / 109]
+
+    [Stage 17:=============>                                         (27 + 8) / 109][Stage 17:================>                                      (32 + 8) / 109]
+
+    25/11/17 20:02:17 WARN MemoryStore: Not enough space to cache rdd_13_36 in memory! (computed 69.6 MiB so far)
+    25/11/17 20:02:17 WARN MemoryStore: Not enough space to cache rdd_13_35 in memory! (computed 120.9 MiB so far)
+    [Stage 17:================>                                      (33 + 8) / 109]
+
+    25/11/17 20:02:17 WARN MemoryStore: Not enough space to cache rdd_13_40 in memory! (computed 18.7 MiB so far)
+    [Stage 17:==================>                                    (36 + 8) / 109]
+
+    25/11/17 20:02:17 WARN MemoryStore: Not enough space to cache rdd_13_43 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:02:18 WARN MemoryStore: Not enough space to cache rdd_13_45 in memory! (computed 36.3 MiB so far)
+    [Stage 17:====================>                                  (40 + 8) / 109]
+
+    25/11/17 20:02:18 WARN MemoryStore: Not enough space to cache rdd_13_46 in memory! (computed 69.6 MiB so far)
+    [Stage 17:====================>                                  (41 + 8) / 109]25/11/17 20:02:18 WARN MemoryStore: Not enough space to cache rdd_13_47 in memory! (computed 69.2 MiB so far)
+    25/11/17 20:02:18 WARN MemoryStore: Not enough space to cache rdd_13_44 in memory! (computed 120.8 MiB so far)
+
+
+    [Stage 17:=====================>                                 (42 + 8) / 109][Stage 17:======================>                                (45 + 8) / 109]
+
+    25/11/17 20:02:18 WARN MemoryStore: Not enough space to cache rdd_13_52 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:18 WARN MemoryStore: Not enough space to cache rdd_13_54 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:02:18 WARN MemoryStore: Not enough space to cache rdd_13_49 in memory! (computed 122.8 MiB so far)
+    [Stage 17:========================>                              (48 + 8) / 109]25/11/17 20:02:18 WARN MemoryStore: Not enough space to cache rdd_13_56 in memory! (computed 18.7 MiB so far)
+
+
+    [Stage 17:========================>                              (49 + 8) / 109]
+
+    [Stage 17:==========================>                            (52 + 8) / 109]25/11/17 20:02:19 WARN MemoryStore: Not enough space to cache rdd_13_58 in memory! (computed 36.0 MiB so far)
+
+
+    25/11/17 20:02:19 WARN MemoryStore: Not enough space to cache rdd_13_57 in memory! (computed 118.4 MiB so far)
+    [Stage 17:============================>                          (56 + 8) / 109]25/11/17 20:02:19 WARN MemoryStore: Not enough space to cache rdd_13_63 in memory! (computed 36.0 MiB so far)
+    25/11/17 20:02:19 WARN MemoryStore: Not enough space to cache rdd_13_64 in memory! (computed 18.1 MiB so far)
+
+
+    [Stage 17:============================>                          (57 + 8) / 109][Stage 17:==============================>                        (60 + 8) / 109]
+
+    25/11/17 20:02:20 WARN MemoryStore: Not enough space to cache rdd_13_66 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:02:20 WARN MemoryStore: Not enough space to cache rdd_13_61 in memory! (computed 171.7 MiB so far)
+    25/11/17 20:02:20 WARN MemoryStore: Not enough space to cache rdd_13_65 in memory! (computed 71.5 MiB so far)
+    [Stage 17:===============================>                       (62 + 8) / 109]
+
+    25/11/17 20:02:20 WARN MemoryStore: Not enough space to cache rdd_13_70 in memory! (computed 70.6 MiB so far)
+    [Stage 17:================================>                      (65 + 8) / 109]25/11/17 20:02:20 WARN MemoryStore: Not enough space to cache rdd_13_68 in memory! (computed 118.6 MiB so far)
+    25/11/17 20:02:20 WARN MemoryStore: Not enough space to cache rdd_13_73 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:02:20 WARN MemoryStore: Not enough space to cache rdd_13_72 in memory! (computed 71.0 MiB so far)
+
+
+    [Stage 17:=================================>                     (66 + 8) / 109]
+
+    [Stage 17:==================================>                    (69 + 8) / 109]25/11/17 20:02:21 WARN MemoryStore: Not enough space to cache rdd_13_77 in memory! (computed 69.3 MiB so far)
+    [Stage 17:====================================>                  (73 + 8) / 109]
+
+    25/11/17 20:02:21 WARN MemoryStore: Not enough space to cache rdd_13_74 in memory! (computed 118.1 MiB so far)
+    25/11/17 20:02:21 WARN MemoryStore: Not enough space to cache rdd_13_76 in memory! (computed 119.1 MiB so far)
+    25/11/17 20:02:21 WARN MemoryStore: Not enough space to cache rdd_13_79 in memory! (computed 68.0 MiB so far)
+    25/11/17 20:02:21 WARN MemoryStore: Not enough space to cache rdd_13_75 in memory! (computed 120.6 MiB so far)
+    [Stage 17:=====================================>                 (74 + 8) / 109]
+
+    [Stage 17:======================================>                (77 + 8) / 109][Stage 17:=======================================>               (79 + 8) / 109]
+
+    25/11/17 20:02:21 WARN MemoryStore: Not enough space to cache rdd_13_84 in memory! (computed 68.8 MiB so far)
+    25/11/17 20:02:22 WARN MemoryStore: Not enough space to cache rdd_13_82 in memory! (computed 118.6 MiB so far)
+    25/11/17 20:02:22 WARN MemoryStore: Not enough space to cache rdd_13_86 in memory! (computed 70.4 MiB so far)
+    [Stage 17:=========================================>             (82 + 8) / 109]
+
+    25/11/17 20:02:22 WARN MemoryStore: Not enough space to cache rdd_13_89 in memory! (computed 69.5 MiB so far)
+    [Stage 17:==========================================>            (85 + 8) / 109]
+
+    25/11/17 20:02:22 WARN MemoryStore: Not enough space to cache rdd_13_92 in memory! (computed 70.3 MiB so far)
+    25/11/17 20:02:22 WARN MemoryStore: Not enough space to cache rdd_13_94 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:02:22 WARN MemoryStore: Not enough space to cache rdd_13_95 in memory! (computed 35.7 MiB so far)
+    [Stage 17:============================================>          (89 + 8) / 109]25/11/17 20:02:22 WARN MemoryStore: Not enough space to cache rdd_13_93 in memory! (computed 69.7 MiB so far)
+    25/11/17 20:02:22 WARN MemoryStore: Not enough space to cache rdd_13_96 in memory! (computed 35.2 MiB so far)
+
+
+    [Stage 17:=============================================>         (91 + 8) / 109]25/11/17 20:02:23 WARN MemoryStore: Not enough space to cache rdd_13_97 in memory! (computed 118.2 MiB so far)
+    [Stage 17:===============================================>       (95 + 8) / 109]
+
+    25/11/17 20:02:23 WARN MemoryStore: Not enough space to cache rdd_13_102 in memory! (computed 18.4 MiB so far)
+    25/11/17 20:02:23 WARN MemoryStore: Not enough space to cache rdd_13_103 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:02:23 WARN MemoryStore: Not enough space to cache rdd_13_101 in memory! (computed 70.2 MiB so far)
+    25/11/17 20:02:23 WARN MemoryStore: Not enough space to cache rdd_13_100 in memory! (computed 68.2 MiB so far)
+
+
+    [Stage 17:================================================>      (96 + 8) / 109][Stage 17:==================================================>   (101 + 8) / 109]
+
+    25/11/17 20:02:24 WARN MemoryStore: Not enough space to cache rdd_13_107 in memory! (computed 34.7 MiB so far)
+    [Stage 17:===================================================>  (103 + 6) / 109]
+
+    [Stage 17:====================================================> (106 + 3) / 109]
+
+    [Stage 17:=====================================================>(108 + 1) / 109]
+
+                                                                                    
+
+    ✓ Saved successfully.
+
+
+## 4. Gold Analysis 2: Payment Type Insights
+
+**Business Question:** Which payment types are most common and which generate the most revenue? How does tipping behavior change with payment type?
+
+
+```python
+print("\n--- Generating Gold Table 2: Payment Type Insights ---")
+
+# We'll create a more readable payment type name using a WHEN clause.
+# Based on the TLC data dictionary: 1=Credit card, 2=Cash, 3=No charge, 4=Dispute
+df_with_payment_name = silver_df_clean.withColumn("payment_name",
+    when(col("payment_type") == 1, "Credit Card")
+    .when(col("payment_type") == 2, "Cash")
+    .when(col("payment_type") == 3, "No Charge")
+    .when(col("payment_type") == 4, "Dispute")
+    .otherwise("Unknown")
+)
+
+# Group by the readable payment name to create the aggregation.
+gold_payment_analysis = df_with_payment_name.groupBy("payment_name") \
+    .agg(
+        count("*").alias("total_trips"),
+        sum("total_amount").alias("total_revenue"),
+        avg("fare_amount").alias("average_fare"),
+        avg("tip_amount").alias("average_tip")
+    ) \
+    .orderBy(desc("total_trips"))
+
+print("\n--- Gold Table 2: Payment Type Analysis ---")
+gold_payment_analysis.show()
+
+# Save the Gold table.
+print(f"Saving payment_analysis Gold table to: {GOLD_BASE_PATH}/payment_analysis")
+gold_payment_analysis.write.mode("overwrite").parquet(f"{GOLD_BASE_PATH}/payment_analysis")
+print("✓ Saved successfully.")
+```
+
+    
+    --- Generating Gold Table 2: Payment Type Insights ---
+    
+    --- Gold Table 2: Payment Type Analysis ---
+
+
+    25/11/17 20:02:25 WARN MemoryStore: Not enough space to cache rdd_13_7 in memory! (computed 34.6 MiB so far)
+    25/11/17 20:02:25 WARN MemoryStore: Not enough space to cache rdd_13_4 in memory! (computed 36.0 MiB so far)
+    25/11/17 20:02:25 WARN MemoryStore: Not enough space to cache rdd_13_0 in memory! (computed 36.1 MiB so far)
+    25/11/17 20:02:25 WARN MemoryStore: Not enough space to cache rdd_13_1 in memory! (computed 35.7 MiB so far)
+    25/11/17 20:02:25 WARN MemoryStore: Not enough space to cache rdd_13_2 in memory! (computed 35.9 MiB so far)
+    25/11/17 20:02:25 WARN MemoryStore: Not enough space to cache rdd_13_3 in memory! (computed 36.2 MiB so far)
+    25/11/17 20:02:25 WARN MemoryStore: Not enough space to cache rdd_13_5 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:02:25 WARN MemoryStore: Not enough space to cache rdd_13_6 in memory! (computed 35.7 MiB so far)
+
+
+    [Stage 25:>                                                       (0 + 8) / 109]
+
+    [Stage 25:====>                                                   (8 + 8) / 109]25/11/17 20:02:26 WARN MemoryStore: Not enough space to cache rdd_13_8 in memory! (computed 71.5 MiB so far)
+    25/11/17 20:02:26 WARN MemoryStore: Not enough space to cache rdd_13_10 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:27 WARN MemoryStore: Not enough space to cache rdd_13_14 in memory! (computed 69.6 MiB so far)
+
+
+    25/11/17 20:02:27 WARN MemoryStore: Not enough space to cache rdd_13_13 in memory! (computed 121.4 MiB so far)
+    25/11/17 20:02:27 WARN MemoryStore: Not enough space to cache rdd_13_15 in memory! (computed 121.6 MiB so far)
+    25/11/17 20:02:27 WARN MemoryStore: Not enough space to cache rdd_13_11 in memory! (computed 189.6 MiB so far)
+
+
+    [Stage 25:====>                                                   (9 + 8) / 109][Stage 25:========>                                              (16 + 8) / 109]
+
+    25/11/17 20:02:27 WARN MemoryStore: Not enough space to cache rdd_13_19 in memory! (computed 71.0 MiB so far)
+    25/11/17 20:02:27 WARN MemoryStore: Not enough space to cache rdd_13_23 in memory! (computed 36.0 MiB so far)
+    25/11/17 20:02:27 WARN MemoryStore: Not enough space to cache rdd_13_16 in memory! (computed 120.4 MiB so far)
+    25/11/17 20:02:27 WARN MemoryStore: Not enough space to cache rdd_13_22 in memory! (computed 119.7 MiB so far)
+
+
+    [Stage 25:===========>                                           (22 + 8) / 109]25/11/17 20:02:28 WARN MemoryStore: Not enough space to cache rdd_13_30 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:02:28 WARN MemoryStore: Not enough space to cache rdd_13_24 in memory! (computed 122.4 MiB so far)
+    25/11/17 20:02:28 WARN MemoryStore: Not enough space to cache rdd_13_25 in memory! (computed 122.7 MiB so far)
+
+
+    [Stage 25:============>                                          (24 + 8) / 109]25/11/17 20:02:28 WARN MemoryStore: Not enough space to cache rdd_13_26 in memory! (computed 122.9 MiB so far)
+    [Stage 25:=============>                                         (26 + 8) / 109]25/11/17 20:02:28 WARN MemoryStore: Not enough space to cache rdd_13_33 in memory! (computed 18.2 MiB so far)
+
+
+    [Stage 25:==============>                                        (29 + 8) / 109]25/11/17 20:02:29 WARN MemoryStore: Not enough space to cache rdd_13_35 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:02:29 WARN MemoryStore: Not enough space to cache rdd_13_36 in memory! (computed 69.6 MiB so far)
+    25/11/17 20:02:29 WARN MemoryStore: Not enough space to cache rdd_13_38 in memory! (computed 18.7 MiB so far)
+    [Stage 25:================>                                      (33 + 8) / 109]
+
+    25/11/17 20:02:29 WARN MemoryStore: Not enough space to cache rdd_13_40 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:29 WARN MemoryStore: Not enough space to cache rdd_13_42 in memory! (computed 18.7 MiB so far)
+    [Stage 25:=================>                                     (35 + 8) / 109]25/11/17 20:02:29 WARN MemoryStore: Not enough space to cache rdd_13_39 in memory! (computed 119.4 MiB so far)
+
+
+    [Stage 25:==================>                                    (37 + 8) / 109]25/11/17 20:02:30 WARN MemoryStore: Not enough space to cache rdd_13_44 in memory! (computed 69.6 MiB so far)
+    25/11/17 20:02:30 WARN MemoryStore: Not enough space to cache rdd_13_43 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:30 WARN MemoryStore: Not enough space to cache rdd_13_41 in memory! (computed 123.7 MiB so far)
+    [Stage 25:=====================>                                 (42 + 8) / 109]
+
+    25/11/17 20:02:30 WARN MemoryStore: Not enough space to cache rdd_13_45 in memory! (computed 71.4 MiB so far)
+    [Stage 25:=====================>                                 (43 + 8) / 109]
+
+    25/11/17 20:02:30 WARN MemoryStore: Not enough space to cache rdd_13_46 in memory! (computed 120.9 MiB so far)
+    25/11/17 20:02:30 WARN MemoryStore: Not enough space to cache rdd_13_47 in memory! (computed 120.0 MiB so far)
+    25/11/17 20:02:30 WARN MemoryStore: Not enough space to cache rdd_13_48 in memory! (computed 120.7 MiB so far)
+    [Stage 25:======================>                                (45 + 8) / 109]
+
+    [Stage 25:========================>                              (49 + 8) / 109]25/11/17 20:02:30 WARN MemoryStore: Not enough space to cache rdd_13_51 in memory! (computed 122.3 MiB so far)
+    25/11/17 20:02:30 WARN MemoryStore: Not enough space to cache rdd_13_52 in memory! (computed 121.5 MiB so far)
+    [Stage 25:=========================>                             (50 + 8) / 109]
+
+    25/11/17 20:02:31 WARN MemoryStore: Not enough space to cache rdd_13_54 in memory! (computed 119.5 MiB so far)
+
+
+    [Stage 25:==========================>                            (53 + 8) / 109]25/11/17 20:02:31 WARN MemoryStore: Not enough space to cache rdd_13_58 in memory! (computed 70.5 MiB so far)
+    25/11/17 20:02:31 WARN MemoryStore: Not enough space to cache rdd_13_57 in memory! (computed 118.4 MiB so far)
+    25/11/17 20:02:31 WARN MemoryStore: Not enough space to cache rdd_13_61 in memory! (computed 35.3 MiB so far)
+
+
+    [Stage 25:============================>                          (57 + 8) / 109]25/11/17 20:02:31 WARN MemoryStore: Not enough space to cache rdd_13_63 in memory! (computed 70.1 MiB so far)
+
+
+    [Stage 25:==============================>                        (60 + 8) / 109]25/11/17 20:02:32 WARN MemoryStore: Not enough space to cache rdd_13_64 in memory! (computed 118.6 MiB so far)
+    25/11/17 20:02:32 WARN MemoryStore: Not enough space to cache rdd_13_66 in memory! (computed 36.2 MiB so far)
+    [Stage 25:==============================>                        (61 + 8) / 109]
+
+    25/11/17 20:02:32 WARN MemoryStore: Not enough space to cache rdd_13_68 in memory! (computed 68.7 MiB so far)
+    25/11/17 20:02:32 WARN MemoryStore: Not enough space to cache rdd_13_67 in memory! (computed 121.6 MiB so far)
+    25/11/17 20:02:32 WARN MemoryStore: Not enough space to cache rdd_13_70 in memory! (computed 18.7 MiB so far)
+    [Stage 25:================================>                      (65 + 8) / 109]
+
+    25/11/17 20:02:32 WARN MemoryStore: Not enough space to cache rdd_13_73 in memory! (computed 18.6 MiB so far)
+    [Stage 25:==================================>                    (68 + 8) / 109]25/11/17 20:02:32 WARN MemoryStore: Not enough space to cache rdd_13_74 in memory! (computed 34.5 MiB so far)
+    25/11/17 20:02:32 WARN MemoryStore: Not enough space to cache rdd_13_75 in memory! (computed 70.5 MiB so far)
+
+
+    [Stage 25:===================================>                   (71 + 8) / 109]
+
+    [Stage 25:====================================>                  (72 + 8) / 109]25/11/17 20:02:33 WARN MemoryStore: Not enough space to cache rdd_13_78 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:33 WARN MemoryStore: Not enough space to cache rdd_13_76 in memory! (computed 119.1 MiB so far)
+    25/11/17 20:02:33 WARN MemoryStore: Not enough space to cache rdd_13_77 in memory! (computed 69.3 MiB so far)
+    25/11/17 20:02:33 WARN MemoryStore: Not enough space to cache rdd_13_79 in memory! (computed 68.0 MiB so far)
+    [Stage 25:======================================>                (76 + 8) / 109]
+
+    25/11/17 20:02:33 WARN MemoryStore: Not enough space to cache rdd_13_80 in memory! (computed 118.2 MiB so far)
+    25/11/17 20:02:33 WARN MemoryStore: Not enough space to cache rdd_13_84 in memory! (computed 35.3 MiB so far)
+    [Stage 25:======================================>                (77 + 8) / 109]25/11/17 20:02:33 WARN MemoryStore: Not enough space to cache rdd_13_82 in memory! (computed 118.6 MiB so far)
+    25/11/17 20:02:33 WARN MemoryStore: Not enough space to cache rdd_13_87 in memory! (computed 35.2 MiB so far)
+
+
+    [Stage 25:========================================>              (81 + 8) / 109]25/11/17 20:02:33 WARN MemoryStore: Not enough space to cache rdd_13_85 in memory! (computed 116.7 MiB so far)
+    25/11/17 20:02:33 WARN MemoryStore: Not enough space to cache rdd_13_89 in memory! (computed 36.0 MiB so far)
+    25/11/17 20:02:33 WARN MemoryStore: Not enough space to cache rdd_13_92 in memory! (computed 18.7 MiB so far)
+    [Stage 25:==========================================>            (85 + 8) / 109]
+
+    [Stage 25:============================================>          (88 + 8) / 109]25/11/17 20:02:34 WARN MemoryStore: Not enough space to cache rdd_13_96 in memory! (computed 18.7 MiB so far)
+    [Stage 25:=============================================>         (91 + 8) / 109]
+
+    25/11/17 20:02:34 WARN MemoryStore: Not enough space to cache rdd_13_95 in memory! (computed 120.4 MiB so far)
+    [Stage 25:==============================================>        (92 + 8) / 109]
+
+    25/11/17 20:02:34 WARN MemoryStore: Not enough space to cache rdd_13_100 in memory! (computed 68.2 MiB so far)
+    25/11/17 20:02:34 WARN MemoryStore: Not enough space to cache rdd_13_99 in memory! (computed 119.0 MiB so far)
+    [Stage 25:================================================>      (97 + 8) / 109]
+
+    [Stage 25:=================================================>     (99 + 8) / 109]25/11/17 20:02:35 WARN MemoryStore: Not enough space to cache rdd_13_105 in memory! (computed 102.8 MiB so far)
+    25/11/17 20:02:35 WARN MemoryStore: Not enough space to cache rdd_13_106 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:02:35 WARN MemoryStore: Not enough space to cache rdd_13_108 in memory! (computed 17.9 MiB so far)
+    [Stage 25:===================================================>  (103 + 6) / 109]
+
+    25/11/17 20:02:35 WARN MemoryStore: Not enough space to cache rdd_13_103 in memory! (computed 184.7 MiB so far)
+    [Stage 25:====================================================> (106 + 3) / 109]
+
+                                                                                    
+
+    +------------+-----------+--------------------+------------------+--------------------+
+    |payment_name|total_trips|       total_revenue|      average_fare|         average_tip|
+    +------------+-----------+--------------------+------------------+--------------------+
+    | Credit Card|  132807793|  3.31316442502084E9| 16.51304501167335|  3.7213618737722984|
+    |        Cash|   34003443|  6.53433430717892E8|15.110302515248126|0.001255846356499...|
+    |     Dispute|    1747929|   2732977.039999969|1.3805625571748064| 0.04657536433115992|
+    |   No Charge|    1051385|1.3769660320000252E7| 11.17716760273353| 0.01235379998763536|
+    |     Unknown|        145|  2154.3100000000004|13.211724137931034|                 0.0|
+    +------------+-----------+--------------------+------------------+--------------------+
+    
+    Saving payment_analysis Gold table to: /home/ubuntu/project/gold_layer_data/payment_analysis
+
+
+    25/11/17 20:02:36 WARN MemoryStore: Not enough space to cache rdd_13_1 in memory! (computed 35.7 MiB so far)
+    25/11/17 20:02:36 WARN MemoryStore: Not enough space to cache rdd_13_7 in memory! (computed 68.8 MiB so far)
+    25/11/17 20:02:36 WARN MemoryStore: Not enough space to cache rdd_13_5 in memory! (computed 71.5 MiB so far)
+
+
+    25/11/17 20:02:36 WARN MemoryStore: Not enough space to cache rdd_13_4 in memory! (computed 123.0 MiB so far)
+    25/11/17 20:02:36 WARN MemoryStore: Not enough space to cache rdd_13_0 in memory! (computed 120.2 MiB so far)
+    25/11/17 20:02:36 WARN MemoryStore: Not enough space to cache rdd_13_3 in memory! (computed 119.8 MiB so far)
+
+
+    [Stage 28:>                                                       (0 + 8) / 109][Stage 28:=>                                                      (2 + 8) / 109]
+
+    [Stage 28:====>                                                   (8 + 8) / 109]25/11/17 20:02:37 WARN MemoryStore: Not enough space to cache rdd_13_15 in memory! (computed 35.6 MiB so far)
+    25/11/17 20:02:37 WARN MemoryStore: Not enough space to cache rdd_13_11 in memory! (computed 71.5 MiB so far)
+    25/11/17 20:02:37 WARN MemoryStore: Not enough space to cache rdd_13_9 in memory! (computed 123.3 MiB so far)
+    25/11/17 20:02:37 WARN MemoryStore: Not enough space to cache rdd_13_8 in memory! (computed 123.7 MiB so far)
+    25/11/17 20:02:37 WARN MemoryStore: Not enough space to cache rdd_13_14 in memory! (computed 69.6 MiB so far)
+    25/11/17 20:02:37 WARN MemoryStore: Not enough space to cache rdd_13_10 in memory! (computed 123.0 MiB so far)
+
+
+    [Stage 28:====>                                                   (9 + 8) / 109][Stage 28:=======>                                               (14 + 8) / 109]
+
+    25/11/17 20:02:37 WARN MemoryStore: Not enough space to cache rdd_13_21 in memory! (computed 36.2 MiB so far)
+    25/11/17 20:02:37 WARN MemoryStore: Not enough space to cache rdd_13_16 in memory! (computed 120.4 MiB so far)
+    25/11/17 20:02:37 WARN MemoryStore: Not enough space to cache rdd_13_17 in memory! (computed 122.7 MiB so far)
+    [Stage 28:========>                                              (16 + 8) / 109]25/11/17 20:02:37 WARN MemoryStore: Not enough space to cache rdd_13_23 in memory! (computed 70.7 MiB so far)
+
+
+    [Stage 28:=========>                                             (19 + 8) / 109]25/11/17 20:02:38 WARN MemoryStore: Not enough space to cache rdd_13_26 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:38 WARN MemoryStore: Not enough space to cache rdd_13_28 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:02:38 WARN MemoryStore: Not enough space to cache rdd_13_30 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:02:38 WARN MemoryStore: Not enough space to cache rdd_13_27 in memory! (computed 69.6 MiB so far)
+    25/11/17 20:02:38 WARN MemoryStore: Not enough space to cache rdd_13_29 in memory! (computed 67.4 MiB so far)
+
+
+    [Stage 28:============>                                          (24 + 8) / 109][Stage 28:============>                                          (25 + 8) / 109]
+
+    25/11/17 20:02:38 WARN MemoryStore: Not enough space to cache rdd_13_32 in memory! (computed 71.5 MiB so far)
+    25/11/17 20:02:38 WARN MemoryStore: Not enough space to cache rdd_13_31 in memory! (computed 122.0 MiB so far)
+    [Stage 28:===============>                                       (31 + 8) / 109]25/11/17 20:02:39 WARN MemoryStore: Not enough space to cache rdd_13_37 in memory! (computed 35.3 MiB so far)
+
+
+    25/11/17 20:02:39 WARN MemoryStore: Not enough space to cache rdd_13_35 in memory! (computed 120.9 MiB so far)
+    [Stage 28:================>                                      (32 + 8) / 109]25/11/17 20:02:39 WARN MemoryStore: Not enough space to cache rdd_13_39 in memory! (computed 69.5 MiB so far)
+    25/11/17 20:02:39 WARN MemoryStore: Not enough space to cache rdd_13_40 in memory! (computed 18.7 MiB so far)
+
+
+    [Stage 28:==================>                                    (36 + 8) / 109]25/11/17 20:02:39 WARN MemoryStore: Not enough space to cache rdd_13_42 in memory! (computed 36.3 MiB so far)
+    [Stage 28:===================>                                   (39 + 8) / 109]
+
+    25/11/17 20:02:39 WARN MemoryStore: Not enough space to cache rdd_13_41 in memory! (computed 123.7 MiB so far)
+    25/11/17 20:02:39 WARN MemoryStore: Not enough space to cache rdd_13_45 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:02:39 WARN MemoryStore: Not enough space to cache rdd_13_47 in memory! (computed 18.1 MiB so far)
+
+
+    [Stage 28:====================>                                  (41 + 8) / 109]25/11/17 20:02:40 WARN MemoryStore: Not enough space to cache rdd_13_48 in memory! (computed 70.5 MiB so far)
+    25/11/17 20:02:40 WARN MemoryStore: Not enough space to cache rdd_13_46 in memory! (computed 120.9 MiB so far)
+    [Stage 28:=====================>                                 (43 + 8) / 109]
+
+    25/11/17 20:02:40 WARN MemoryStore: Not enough space to cache rdd_13_50 in memory! (computed 70.4 MiB so far)
+    [Stage 28:========================>                              (48 + 8) / 109]25/11/17 20:02:40 WARN MemoryStore: Not enough space to cache rdd_13_54 in memory! (computed 35.3 MiB so far)
+
+
+    25/11/17 20:02:40 WARN MemoryStore: Not enough space to cache rdd_13_52 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:40 WARN MemoryStore: Not enough space to cache rdd_13_53 in memory! (computed 69.4 MiB so far)
+    [Stage 28:========================>                              (49 + 8) / 109]25/11/17 20:02:40 WARN MemoryStore: Not enough space to cache rdd_13_55 in memory! (computed 69.2 MiB so far)
+
+
+    25/11/17 20:02:40 WARN MemoryStore: Not enough space to cache rdd_13_56 in memory! (computed 120.9 MiB so far)
+    [Stage 28:=========================>                             (50 + 8) / 109]
+
+    [Stage 28:==========================>                            (53 + 8) / 109]25/11/17 20:02:41 WARN MemoryStore: Not enough space to cache rdd_13_58 in memory! (computed 120.5 MiB so far)
+    25/11/17 20:02:41 WARN MemoryStore: Not enough space to cache rdd_13_63 in memory! (computed 36.0 MiB so far)
+    25/11/17 20:02:41 WARN MemoryStore: Not enough space to cache rdd_13_61 in memory! (computed 69.9 MiB so far)
+    25/11/17 20:02:41 WARN MemoryStore: Not enough space to cache rdd_13_62 in memory! (computed 68.9 MiB so far)
+
+
+    [Stage 28:============================>                          (57 + 8) / 109]
+
+    [Stage 28:==============================>                        (60 + 8) / 109]25/11/17 20:02:41 WARN MemoryStore: Not enough space to cache rdd_13_69 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:02:41 WARN MemoryStore: Not enough space to cache rdd_13_67 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:41 WARN MemoryStore: Not enough space to cache rdd_13_70 in memory! (computed 36.2 MiB so far)
+    [Stage 28:================================>                      (65 + 8) / 109]
+
+    25/11/17 20:02:42 WARN MemoryStore: Not enough space to cache rdd_13_65 in memory! (computed 121.7 MiB so far)
+    25/11/17 20:02:42 WARN MemoryStore: Not enough space to cache rdd_13_66 in memory! (computed 120.4 MiB so far)
+
+
+    [Stage 28:==================================>                    (69 + 8) / 109]25/11/17 20:02:42 WARN MemoryStore: Not enough space to cache rdd_13_76 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:02:42 WARN MemoryStore: Not enough space to cache rdd_13_75 in memory! (computed 70.5 MiB so far)
+    25/11/17 20:02:42 WARN MemoryStore: Not enough space to cache rdd_13_74 in memory! (computed 67.9 MiB so far)
+    25/11/17 20:02:42 WARN MemoryStore: Not enough space to cache rdd_13_79 in memory! (computed 34.5 MiB so far)
+    [Stage 28:====================================>                  (73 + 8) / 109]
+
+    25/11/17 20:02:42 WARN MemoryStore: Not enough space to cache rdd_13_77 in memory! (computed 69.3 MiB so far)
+    25/11/17 20:02:42 WARN MemoryStore: Not enough space to cache rdd_13_73 in memory! (computed 119.7 MiB so far)
+    25/11/17 20:02:42 WARN MemoryStore: Not enough space to cache rdd_13_80 in memory! (computed 68.4 MiB so far)
+
+
+    [Stage 28:=======================================>               (79 + 8) / 109]25/11/17 20:02:43 WARN MemoryStore: Not enough space to cache rdd_13_83 in memory! (computed 68.8 MiB so far)
+    25/11/17 20:02:43 WARN MemoryStore: Not enough space to cache rdd_13_87 in memory! (computed 18.2 MiB so far)
+    [Stage 28:========================================>              (81 + 8) / 109]
+
+    25/11/17 20:02:43 WARN MemoryStore: Not enough space to cache rdd_13_84 in memory! (computed 118.8 MiB so far)
+    [Stage 28:========================================>              (81 + 9) / 109]
+
+    [Stage 28:============================================>          (88 + 8) / 109]25/11/17 20:02:43 WARN MemoryStore: Not enough space to cache rdd_13_95 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:02:43 WARN MemoryStore: Not enough space to cache rdd_13_90 in memory! (computed 67.5 MiB so far)
+    25/11/17 20:02:43 WARN MemoryStore: Not enough space to cache rdd_13_94 in memory! (computed 68.8 MiB so far)
+    25/11/17 20:02:43 WARN MemoryStore: Not enough space to cache rdd_13_91 in memory! (computed 119.6 MiB so far)
+    [Stage 28:=============================================>         (90 + 8) / 109]
+
+    [Stage 28:=============================================>         (91 + 8) / 109]25/11/17 20:02:44 WARN MemoryStore: Not enough space to cache rdd_13_99 in memory! (computed 35.8 MiB so far)
+    25/11/17 20:02:44 WARN MemoryStore: Not enough space to cache rdd_13_102 in memory! (computed 18.4 MiB so far)
+    [Stage 28:================================================>      (96 + 8) / 109]
+
+    25/11/17 20:02:44 WARN MemoryStore: Not enough space to cache rdd_13_103 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:02:44 WARN MemoryStore: Not enough space to cache rdd_13_101 in memory! (computed 70.2 MiB so far)
+    [Stage 28:=================================================>     (98 + 8) / 109]
+
+    25/11/17 20:02:44 WARN MemoryStore: Not enough space to cache rdd_13_104 in memory! (computed 67.5 MiB so far)
+    25/11/17 20:02:44 WARN MemoryStore: Not enough space to cache rdd_13_107 in memory! (computed 34.7 MiB so far)
+    [Stage 28:==================================================>   (102 + 7) / 109]
+
+    [Stage 28:====================================================> (106 + 3) / 109]                                                                                
+
+    ✓ Saved successfully.
+
+
+## 5. Gold Analysis 3: Trip Distance Distribution
+
+**Business Question:** What are the most common trip distances? Are there differences in how Yellow and Green taxis are used for short vs. long trips?
+
+
+```python
+print("\n--- Generating Gold Table 3: Trip Distance Distribution ---")
+
+# Create "distance buckets" to categorize each trip.
+df_with_buckets = silver_df_clean.withColumn("distance_bucket",
+    when(col("trip_distance") <= 1, "A: 0-1 Miles (Short Hop)")
+    .when((col("trip_distance") > 1) & (col("trip_distance") <= 3), "B: 1-3 Miles (Standard)")
+    .when((col("trip_distance") > 3) & (col("trip_distance") <= 5), "C: 3-5 Miles (Medium)")
+    .when((col("trip_distance") > 5) & (col("trip_distance") <= 10), "D: 5-10 Miles (Long)")
+    .otherwise("E: 10+ Miles (Very Long)")
+)
+
+# Group by taxi_type and the new distance buckets.
+gold_distance_analysis = df_with_buckets.groupBy("taxi_type", "distance_bucket") \
+    .agg(
+        count("*").alias("total_trips"),
+        avg("total_amount").alias("average_fare")
+    ) \
+    .orderBy("taxi_type", "distance_bucket")
+
+print("\n--- Gold Table 3: Trip Distance Analysis ---")
+gold_distance_analysis.show()
+
+# Save the Gold table.
+print(f"Saving distance_analysis Gold table to: {GOLD_BASE_PATH}/distance_analysis")
+gold_distance_analysis.write.mode("overwrite").parquet(f"{GOLD_BASE_PATH}/distance_analysis")
+print("✓ Saved successfully.")
+```
+
+    
+    --- Generating Gold Table 3: Trip Distance Distribution ---
+    
+    --- Gold Table 3: Trip Distance Analysis ---
+
+
+    25/11/17 20:02:45 WARN MemoryStore: Not enough space to cache rdd_13_3 in memory! (computed 36.2 MiB so far)
+    25/11/17 20:02:45 WARN MemoryStore: Not enough space to cache rdd_13_6 in memory! (computed 35.7 MiB so far)
+    25/11/17 20:02:45 WARN MemoryStore: Not enough space to cache rdd_13_1 in memory! (computed 35.7 MiB so far)
+    25/11/17 20:02:45 WARN MemoryStore: Not enough space to cache rdd_13_4 in memory! (computed 36.0 MiB so far)
+    25/11/17 20:02:45 WARN MemoryStore: Not enough space to cache rdd_13_2 in memory! (computed 35.9 MiB so far)
+    25/11/17 20:02:45 WARN MemoryStore: Not enough space to cache rdd_13_7 in memory! (computed 34.6 MiB so far)
+    25/11/17 20:02:45 WARN MemoryStore: Not enough space to cache rdd_13_0 in memory! (computed 70.4 MiB so far)
+
+
+    [Stage 36:>                                                       (0 + 8) / 109]
+
+    [Stage 36:==>                                                     (4 + 8) / 109]25/11/17 20:02:46 WARN MemoryStore: Not enough space to cache rdd_13_12 in memory! (computed 35.8 MiB so far)
+    25/11/17 20:02:47 WARN MemoryStore: Not enough space to cache rdd_13_13 in memory! (computed 36.3 MiB so far)
+
+
+    [Stage 36:====>                                                   (8 + 8) / 109]25/11/17 20:02:47 WARN MemoryStore: Not enough space to cache rdd_13_11 in memory! (computed 123.1 MiB so far)
+    25/11/17 20:02:47 WARN MemoryStore: Not enough space to cache rdd_13_10 in memory! (computed 123.0 MiB so far)
+    25/11/17 20:02:47 WARN MemoryStore: Not enough space to cache rdd_13_14 in memory! (computed 120.9 MiB so far)
+
+
+    25/11/17 20:02:47 WARN MemoryStore: Not enough space to cache rdd_13_15 in memory! (computed 121.6 MiB so far)
+
+
+    [Stage 36:======>                                                (13 + 8) / 109][Stage 36:========>                                              (16 + 8) / 109]
+
+    25/11/17 20:02:48 WARN MemoryStore: Not enough space to cache rdd_13_22 in memory! (computed 69.4 MiB so far)
+    25/11/17 20:02:48 WARN MemoryStore: Not enough space to cache rdd_13_17 in memory! (computed 122.7 MiB so far)
+    25/11/17 20:02:48 WARN MemoryStore: Not enough space to cache rdd_13_18 in memory! (computed 120.4 MiB so far)
+    25/11/17 20:02:48 WARN MemoryStore: Not enough space to cache rdd_13_21 in memory! (computed 123.1 MiB so far)
+    25/11/17 20:02:48 WARN MemoryStore: Not enough space to cache rdd_13_23 in memory! (computed 120.6 MiB so far)
+
+
+    [Stage 36:===========>                                           (23 + 8) / 109]25/11/17 20:02:48 WARN MemoryStore: Not enough space to cache rdd_13_30 in memory! (computed 71.5 MiB so far)
+    25/11/17 20:02:48 WARN MemoryStore: Not enough space to cache rdd_13_28 in memory! (computed 120.0 MiB so far)
+    25/11/17 20:02:48 WARN MemoryStore: Not enough space to cache rdd_13_27 in memory! (computed 121.0 MiB so far)
+    25/11/17 20:02:48 WARN MemoryStore: Not enough space to cache rdd_13_31 in memory! (computed 71.5 MiB so far)
+    25/11/17 20:02:48 WARN MemoryStore: Not enough space to cache rdd_13_26 in memory! (computed 122.9 MiB so far)
+    [Stage 36:============>                                          (24 + 8) / 109]
+
+    [Stage 36:=============>                                         (26 + 8) / 109]25/11/17 20:02:49 WARN MemoryStore: Not enough space to cache rdd_13_35 in memory! (computed 69.6 MiB so far)
+    [Stage 36:================>                                      (32 + 8) / 109]
+
+    25/11/17 20:02:49 WARN MemoryStore: Not enough space to cache rdd_13_34 in memory! (computed 119.7 MiB so far)
+    25/11/17 20:02:49 WARN MemoryStore: Not enough space to cache rdd_13_36 in memory! (computed 121.0 MiB so far)
+
+
+    25/11/17 20:02:49 WARN MemoryStore: Not enough space to cache rdd_13_40 in memory! (computed 18.7 MiB so far)
+    [Stage 36:==================>                                    (36 + 8) / 109]
+
+    25/11/17 20:02:50 WARN MemoryStore: Not enough space to cache rdd_13_41 in memory! (computed 123.7 MiB so far)
+    25/11/17 20:02:50 WARN MemoryStore: Not enough space to cache rdd_13_46 in memory! (computed 35.3 MiB so far)
+    [Stage 36:====================>                                  (40 + 8) / 109]25/11/17 20:02:50 WARN MemoryStore: Not enough space to cache rdd_13_44 in memory! (computed 69.6 MiB so far)
+    25/11/17 20:02:50 WARN MemoryStore: Not enough space to cache rdd_13_45 in memory! (computed 71.4 MiB so far)
+
+
+    [Stage 36:====================>                                  (41 + 8) / 109]25/11/17 20:02:50 WARN MemoryStore: Not enough space to cache rdd_13_47 in memory! (computed 120.0 MiB so far)
+    25/11/17 20:02:50 WARN MemoryStore: Not enough space to cache rdd_13_49 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:02:50 WARN MemoryStore: Not enough space to cache rdd_13_48 in memory! (computed 120.7 MiB so far)
+    [Stage 36:======================>                                (44 + 8) / 109]
+
+    [Stage 36:=======================>                               (47 + 8) / 109]25/11/17 20:02:51 WARN MemoryStore: Not enough space to cache rdd_13_52 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:51 WARN MemoryStore: Not enough space to cache rdd_13_51 in memory! (computed 122.3 MiB so far)
+
+
+    [Stage 36:========================>                              (49 + 8) / 109]25/11/17 20:02:51 WARN MemoryStore: Not enough space to cache rdd_13_56 in memory! (computed 70.7 MiB so far)
+    [Stage 36:=========================>                             (50 + 8) / 109]
+
+    [Stage 36:==========================>                            (52 + 8) / 109]25/11/17 20:02:52 WARN MemoryStore: Not enough space to cache rdd_13_58 in memory! (computed 70.5 MiB so far)
+    25/11/17 20:02:52 WARN MemoryStore: Not enough space to cache rdd_13_60 in memory! (computed 35.3 MiB so far)
+    [Stage 36:===========================>                           (55 + 8) / 109]
+
+    25/11/17 20:02:52 WARN MemoryStore: Not enough space to cache rdd_13_59 in memory! (computed 118.0 MiB so far)
+    [Stage 36:============================>                          (56 + 8) / 109]25/11/17 20:02:52 WARN MemoryStore: Not enough space to cache rdd_13_62 in memory! (computed 118.9 MiB so far)
+    25/11/17 20:02:52 WARN MemoryStore: Not enough space to cache rdd_13_63 in memory! (computed 70.1 MiB so far)
+
+
+    [Stage 36:==============================>                        (61 + 8) / 109]25/11/17 20:02:52 WARN MemoryStore: Not enough space to cache rdd_13_67 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:52 WARN MemoryStore: Not enough space to cache rdd_13_64 in memory! (computed 118.6 MiB so far)
+    25/11/17 20:02:52 WARN MemoryStore: Not enough space to cache rdd_13_68 in memory! (computed 68.7 MiB so far)
+    25/11/17 20:02:52 WARN MemoryStore: Not enough space to cache rdd_13_65 in memory! (computed 121.7 MiB so far)
+
+
+    [Stage 36:===============================>                       (62 + 8) / 109][Stage 36:================================>                      (64 + 8) / 109]
+
+    25/11/17 20:02:53 WARN MemoryStore: Not enough space to cache rdd_13_73 in memory! (computed 18.6 MiB so far)
+    [Stage 36:==================================>                    (68 + 8) / 109]25/11/17 20:02:53 WARN MemoryStore: Not enough space to cache rdd_13_72 in memory! (computed 71.0 MiB so far)
+    25/11/17 20:02:53 WARN MemoryStore: Not enough space to cache rdd_13_75 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:02:53 WARN MemoryStore: Not enough space to cache rdd_13_74 in memory! (computed 67.9 MiB so far)
+
+
+    [Stage 36:==================================>                    (69 + 8) / 109][Stage 36:====================================>                  (72 + 8) / 109]
+
+    25/11/17 20:02:53 WARN MemoryStore: Not enough space to cache rdd_13_77 in memory! (computed 69.3 MiB so far)
+    25/11/17 20:02:53 WARN MemoryStore: Not enough space to cache rdd_13_79 in memory! (computed 68.0 MiB so far)
+    25/11/17 20:02:53 WARN MemoryStore: Not enough space to cache rdd_13_78 in memory! (computed 71.4 MiB so far)
+
+
+    [Stage 36:======================================>                (76 + 8) / 109]25/11/17 20:02:54 WARN MemoryStore: Not enough space to cache rdd_13_83 in memory! (computed 68.8 MiB so far)
+    25/11/17 20:02:54 WARN MemoryStore: Not enough space to cache rdd_13_80 in memory! (computed 118.2 MiB so far)
+    [Stage 36:======================================>                (77 + 8) / 109]
+
+    25/11/17 20:02:54 WARN MemoryStore: Not enough space to cache rdd_13_82 in memory! (computed 118.6 MiB so far)
+    25/11/17 20:02:54 WARN MemoryStore: Not enough space to cache rdd_13_84 in memory! (computed 118.8 MiB so far)
+    25/11/17 20:02:54 WARN MemoryStore: Not enough space to cache rdd_13_87 in memory! (computed 18.2 MiB so far)
+    [Stage 36:========================================>              (80 + 8) / 109]
+
+    [Stage 36:==========================================>            (84 + 8) / 109]25/11/17 20:02:54 WARN MemoryStore: Not enough space to cache rdd_13_90 in memory! (computed 34.2 MiB so far)
+    25/11/17 20:02:54 WARN MemoryStore: Not enough space to cache rdd_13_91 in memory! (computed 69.8 MiB so far)
+    [Stage 36:===========================================>           (86 + 8) / 109]
+
+    25/11/17 20:02:54 WARN MemoryStore: Not enough space to cache rdd_13_93 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:02:54 WARN MemoryStore: Not enough space to cache rdd_13_92 in memory! (computed 70.3 MiB so far)
+
+
+    [Stage 36:=============================================>         (90 + 8) / 109]25/11/17 20:02:55 WARN MemoryStore: Not enough space to cache rdd_13_97 in memory! (computed 68.0 MiB so far)
+    [Stage 36:==============================================>        (92 + 8) / 109]
+
+    25/11/17 20:02:55 WARN MemoryStore: Not enough space to cache rdd_13_96 in memory! (computed 118.4 MiB so far)
+    25/11/17 20:02:55 WARN MemoryStore: Not enough space to cache rdd_13_101 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:02:55 WARN MemoryStore: Not enough space to cache rdd_13_99 in memory! (computed 69.1 MiB so far)
+    [Stage 36:===============================================>       (94 + 8) / 109]
+
+    [Stage 36:=================================================>     (98 + 8) / 109]25/11/17 20:02:56 WARN MemoryStore: Not enough space to cache rdd_13_106 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:02:56 WARN MemoryStore: Not enough space to cache rdd_13_104 in memory! (computed 34.4 MiB so far)
+    25/11/17 20:02:56 WARN MemoryStore: Not enough space to cache rdd_13_102 in memory! (computed 118.7 MiB so far)
+    [Stage 36:==================================================>   (102 + 7) / 109]
+
+    25/11/17 20:02:56 WARN MemoryStore: Not enough space to cache rdd_13_103 in memory! (computed 118.0 MiB so far)
+    25/11/17 20:02:56 WARN MemoryStore: Not enough space to cache rdd_13_107 in memory! (computed 68.5 MiB so far)
+    [Stage 36:===================================================>  (104 + 5) / 109]
+
+    [Stage 36:====================================================> (106 + 3) / 109][Stage 36:=====================================================>(107 + 2) / 109]
+
+                                                                                    
+
+    +---------+--------------------+-----------+------------------+
+    |taxi_type|     distance_bucket|total_trips|      average_fare|
+    +---------+--------------------+-----------+------------------+
+    |    green|A: 0-1 Miles (Sho...|     933803|12.100283357400453|
+    |    green|B: 1-3 Miles (Sta...|    1908362|14.436173629498924|
+    |    green|C: 3-5 Miles (Med...|     556305|23.521648663935313|
+    |    green|D: 5-10 Miles (Long)|     416194|34.943171501730994|
+    |    green|E: 10+ Miles (Ver...|     164905| 66.23542730662132|
+    |   yellow|A: 0-1 Miles (Sho...|   40014924|13.168384459486726|
+    |   yellow|B: 1-3 Miles (Sta...|   80502609|17.547192781447595|
+    |   yellow|C: 3-5 Miles (Med...|   19081137| 26.13284710390166|
+    |   yellow|D: 5-10 Miles (Long)|   13629003|40.239275331422284|
+    |   yellow|E: 10+ Miles (Ver...|   12403453| 74.10119393526276|
+    +---------+--------------------+-----------+------------------+
+    
+    Saving distance_analysis Gold table to: /home/ubuntu/project/gold_layer_data/distance_analysis
+
+
+    25/11/17 20:02:57 WARN MemoryStore: Not enough space to cache rdd_13_0 in memory! (computed 70.4 MiB so far)
+    25/11/17 20:02:57 WARN MemoryStore: Not enough space to cache rdd_13_1 in memory! (computed 70.8 MiB so far)
+    25/11/17 20:02:57 WARN MemoryStore: Not enough space to cache rdd_13_2 in memory! (computed 123.1 MiB so far)
+    25/11/17 20:02:57 WARN MemoryStore: Not enough space to cache rdd_13_5 in memory! (computed 123.5 MiB so far)
+    25/11/17 20:02:57 WARN MemoryStore: Not enough space to cache rdd_13_4 in memory! (computed 123.0 MiB so far)
+
+
+    [Stage 39:>                                                       (0 + 8) / 109]
+
+    [Stage 39:====>                                                   (8 + 8) / 109]25/11/17 20:02:58 WARN MemoryStore: Not enough space to cache rdd_13_10 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:58 WARN MemoryStore: Not enough space to cache rdd_13_14 in memory! (computed 69.6 MiB so far)
+
+
+    25/11/17 20:02:58 WARN MemoryStore: Not enough space to cache rdd_13_11 in memory! (computed 123.1 MiB so far)
+    25/11/17 20:02:58 WARN MemoryStore: Not enough space to cache rdd_13_9 in memory! (computed 123.3 MiB so far)
+    25/11/17 20:02:58 WARN MemoryStore: Not enough space to cache rdd_13_13 in memory! (computed 121.4 MiB so far)
+    25/11/17 20:02:58 WARN MemoryStore: Not enough space to cache rdd_13_15 in memory! (computed 121.6 MiB so far)
+
+
+    [Stage 39:====>                                                   (9 + 8) / 109][Stage 39:=======>                                               (14 + 8) / 109]
+
+    25/11/17 20:02:58 WARN MemoryStore: Not enough space to cache rdd_13_22 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:02:58 WARN MemoryStore: Not enough space to cache rdd_13_21 in memory! (computed 71.4 MiB so far)
+    25/11/17 20:02:59 WARN MemoryStore: Not enough space to cache rdd_13_17 in memory! (computed 122.7 MiB so far)
+    25/11/17 20:02:59 WARN MemoryStore: Not enough space to cache rdd_13_23 in memory! (computed 70.7 MiB so far)
+    [Stage 39:========>                                              (16 + 8) / 109]25/11/17 20:02:59 WARN MemoryStore: Not enough space to cache rdd_13_19 in memory! (computed 122.3 MiB so far)
+
+
+    25/11/17 20:02:59 WARN MemoryStore: Not enough space to cache rdd_13_16 in memory! (computed 187.2 MiB so far)
+    [Stage 39:========>                                              (17 + 8) / 109]
+
+    [Stage 39:===========>                                           (23 + 8) / 109]25/11/17 20:02:59 WARN MemoryStore: Not enough space to cache rdd_13_27 in memory! (computed 69.6 MiB so far)
+    25/11/17 20:02:59 WARN MemoryStore: Not enough space to cache rdd_13_24 in memory! (computed 122.4 MiB so far)
+    25/11/17 20:02:59 WARN MemoryStore: Not enough space to cache rdd_13_30 in memory! (computed 122.1 MiB so far)
+    25/11/17 20:02:59 WARN MemoryStore: Not enough space to cache rdd_13_31 in memory! (computed 71.5 MiB so far)
+    [Stage 39:============>                                          (24 + 8) / 109]
+
+    [Stage 39:============>                                          (25 + 8) / 109]
+
+    [Stage 39:=============>                                         (26 + 8) / 109]25/11/17 20:03:00 WARN MemoryStore: Not enough space to cache rdd_13_34 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:03:00 WARN MemoryStore: Not enough space to cache rdd_13_35 in memory! (computed 35.3 MiB so far)
+    [Stage 39:===============>                                       (31 + 8) / 109]
+
+    25/11/17 20:03:00 WARN MemoryStore: Not enough space to cache rdd_13_37 in memory! (computed 69.6 MiB so far)
+    25/11/17 20:03:00 WARN MemoryStore: Not enough space to cache rdd_13_38 in memory! (computed 36.3 MiB so far)
+    [Stage 39:================>                                      (32 + 8) / 109]
+
+    25/11/17 20:03:00 WARN MemoryStore: Not enough space to cache rdd_13_39 in memory! (computed 69.5 MiB so far)
+    25/11/17 20:03:01 WARN MemoryStore: Not enough space to cache rdd_13_40 in memory! (computed 18.7 MiB so far)
+    [Stage 39:==================>                                    (36 + 8) / 109]
+
+    25/11/17 20:03:01 WARN MemoryStore: Not enough space to cache rdd_13_42 in memory! (computed 71.5 MiB so far)
+    [Stage 39:===================>                                   (38 + 8) / 109]25/11/17 20:03:01 WARN MemoryStore: Not enough space to cache rdd_13_43 in memory! (computed 121.3 MiB so far)
+    25/11/17 20:03:01 WARN MemoryStore: Not enough space to cache rdd_13_46 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:03:01 WARN MemoryStore: Not enough space to cache rdd_13_45 in memory! (computed 71.4 MiB so far)
+
+
+    [Stage 39:====================>                                  (41 + 8) / 109]
+
+    25/11/17 20:03:01 WARN MemoryStore: Not enough space to cache rdd_13_47 in memory! (computed 120.0 MiB so far)
+    [Stage 39:======================>                                (45 + 8) / 109]
+
+    25/11/17 20:03:02 WARN MemoryStore: Not enough space to cache rdd_13_51 in memory! (computed 71.3 MiB so far)
+    25/11/17 20:03:02 WARN MemoryStore: Not enough space to cache rdd_13_50 in memory! (computed 70.4 MiB so far)
+    25/11/17 20:03:02 WARN MemoryStore: Not enough space to cache rdd_13_49 in memory! (computed 122.8 MiB so far)
+    [Stage 39:========================>                              (48 + 8) / 109]25/11/17 20:03:02 WARN MemoryStore: Not enough space to cache rdd_13_52 in memory! (computed 121.5 MiB so far)
+
+
+    25/11/17 20:03:02 WARN MemoryStore: Not enough space to cache rdd_13_56 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:03:02 WARN MemoryStore: Not enough space to cache rdd_13_53 in memory! (computed 119.2 MiB so far)
+    [Stage 39:========================>                              (49 + 8) / 109]
+
+    [Stage 39:==========================>                            (52 + 8) / 109]
+
+    25/11/17 20:03:03 WARN MemoryStore: Not enough space to cache rdd_13_57 in memory! (computed 118.4 MiB so far)
+    25/11/17 20:03:03 WARN MemoryStore: Not enough space to cache rdd_13_60 in memory! (computed 69.0 MiB so far)
+    [Stage 39:============================>                          (56 + 8) / 109]25/11/17 20:03:03 WARN MemoryStore: Not enough space to cache rdd_13_62 in memory! (computed 35.3 MiB so far)
+    25/11/17 20:03:03 WARN MemoryStore: Not enough space to cache rdd_13_61 in memory! (computed 69.9 MiB so far)
+
+
+    [Stage 39:============================>                          (57 + 8) / 109][Stage 39:=============================>                         (59 + 8) / 109]
+
+    25/11/17 20:03:03 WARN MemoryStore: Not enough space to cache rdd_13_66 in memory! (computed 18.6 MiB so far)
+    25/11/17 20:03:03 WARN MemoryStore: Not enough space to cache rdd_13_67 in memory! (computed 36.3 MiB so far)
+    [Stage 39:==============================>                        (60 + 8) / 109]
+
+    25/11/17 20:03:03 WARN MemoryStore: Not enough space to cache rdd_13_69 in memory! (computed 35.3 MiB so far)
+    [Stage 39:===============================>                       (63 + 8) / 109]25/11/17 20:03:04 WARN MemoryStore: Not enough space to cache rdd_13_68 in memory! (computed 118.6 MiB so far)
+    25/11/17 20:03:04 WARN MemoryStore: Not enough space to cache rdd_13_72 in memory! (computed 18.7 MiB so far)
+
+
+    [Stage 39:=================================>                     (66 + 8) / 109]25/11/17 20:03:04 WARN MemoryStore: Not enough space to cache rdd_13_71 in memory! (computed 69.6 MiB so far)
+    [Stage 39:==================================>                    (68 + 8) / 109]
+
+    25/11/17 20:03:04 WARN MemoryStore: Not enough space to cache rdd_13_74 in memory! (computed 67.9 MiB so far)
+
+
+    [Stage 39:==================================>                    (69 + 8) / 109]25/11/17 20:03:04 WARN MemoryStore: Not enough space to cache rdd_13_75 in memory! (computed 70.5 MiB so far)
+    25/11/17 20:03:04 WARN MemoryStore: Not enough space to cache rdd_13_73 in memory! (computed 119.7 MiB so far)
+    25/11/17 20:03:04 WARN MemoryStore: Not enough space to cache rdd_13_77 in memory! (computed 36.1 MiB so far)
+    25/11/17 20:03:04 WARN MemoryStore: Not enough space to cache rdd_13_78 in memory! (computed 18.7 MiB so far)
+    [Stage 39:====================================>                  (72 + 8) / 109]
+
+    [Stage 39:=====================================>                 (75 + 8) / 109]25/11/17 20:03:05 WARN MemoryStore: Not enough space to cache rdd_13_79 in memory! (computed 118.2 MiB so far)
+    25/11/17 20:03:05 WARN MemoryStore: Not enough space to cache rdd_13_83 in memory! (computed 18.7 MiB so far)
+    25/11/17 20:03:05 WARN MemoryStore: Not enough space to cache rdd_13_80 in memory! (computed 118.2 MiB so far)
+    25/11/17 20:03:05 WARN MemoryStore: Not enough space to cache rdd_13_81 in memory! (computed 68.4 MiB so far)
+    [Stage 39:=======================================>               (78 + 8) / 109]
+
+    [Stage 39:========================================>              (80 + 8) / 109]25/11/17 20:03:05 WARN MemoryStore: Not enough space to cache rdd_13_88 in memory! (computed 18.2 MiB so far)
+    25/11/17 20:03:05 WARN MemoryStore: Not enough space to cache rdd_13_84 in memory! (computed 118.8 MiB so far)
+    25/11/17 20:03:05 WARN MemoryStore: Not enough space to cache rdd_13_85 in memory! (computed 116.7 MiB so far)
+    25/11/17 20:03:05 WARN MemoryStore: Not enough space to cache rdd_13_86 in memory! (computed 120.1 MiB so far)
+
+
+    [Stage 39:=========================================>             (83 + 8) / 109]25/11/17 20:03:05 WARN MemoryStore: Not enough space to cache rdd_13_87 in memory! (computed 118.1 MiB so far)
+    25/11/17 20:03:05 WARN MemoryStore: Not enough space to cache rdd_13_89 in memory! (computed 18.4 MiB so far)
+
+
+    [Stage 39:==========================================>            (85 + 8) / 109][Stage 39:============================================>          (89 + 8) / 109]
+
+    25/11/17 20:03:06 WARN MemoryStore: Not enough space to cache rdd_13_96 in memory! (computed 35.2 MiB so far)
+    25/11/17 20:03:06 WARN MemoryStore: Not enough space to cache rdd_13_98 in memory! (computed 17.7 MiB so far)
+    25/11/17 20:03:06 WARN MemoryStore: Not enough space to cache rdd_13_94 in memory! (computed 68.8 MiB so far)
+    25/11/17 20:03:06 WARN MemoryStore: Not enough space to cache rdd_13_95 in memory! (computed 69.7 MiB so far)
+    [Stage 39:=============================================>         (91 + 8) / 109]
+
+    [Stage 39:==============================================>        (92 + 8) / 109]25/11/17 20:03:06 WARN MemoryStore: Not enough space to cache rdd_13_101 in memory! (computed 36.3 MiB so far)
+    25/11/17 20:03:06 WARN MemoryStore: Not enough space to cache rdd_13_103 in memory! (computed 18.2 MiB so far)
+    [Stage 39:=================================================>     (98 + 8) / 109]
+
+    25/11/17 20:03:06 WARN MemoryStore: Not enough space to cache rdd_13_105 in memory! (computed 68.2 MiB so far)
+    25/11/17 20:03:06 WARN MemoryStore: Not enough space to cache rdd_13_104 in memory! (computed 34.4 MiB so far)
+
+
+    [Stage 39:=================================================>     (99 + 8) / 109]25/11/17 20:03:07 WARN MemoryStore: Not enough space to cache rdd_13_102 in memory! (computed 118.7 MiB so far)
+    25/11/17 20:03:07 WARN MemoryStore: Not enough space to cache rdd_13_106 in memory! (computed 121.0 MiB so far)
+    [Stage 39:==================================================>   (101 + 8) / 109]
+
+    [Stage 39:===================================================>  (104 + 5) / 109][Stage 39:=====================================================>(108 + 1) / 109]
+
+    ✓ Saved successfully.
+
+
+                                                                                    
+
+## 6. Cleanup
+
+Stop the Spark session to release cluster resources.
+
+
+```python
+spark.stop()
+print("\nGold Layer processing complete. Spark session stopped.")
+```
+
+    
+    Gold Layer processing complete. Spark session stopped.
+
